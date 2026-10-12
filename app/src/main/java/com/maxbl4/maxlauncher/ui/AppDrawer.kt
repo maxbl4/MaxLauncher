@@ -148,7 +148,7 @@ fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modi
             // Swallow touches so they never reach the home screen underneath.
             .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } },
     ) {
-        Column(
+        Box(
             Modifier
                 .fillMaxSize()
                 .graphicsLayer {
@@ -157,22 +157,34 @@ fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modi
                     translationY = drawer.enterDirection * (1f - p) * enterOffsetPx
                 }
                 .windowInsetsPadding(WindowInsets.systemBars)
-                // The search field sits at the bottom and rides on top of the keyboard.
-                .imePadding()
                 .padding(horizontal = 8.dp),
         ) {
-            TopBar(drawerContent.hasWorkProfile, workTab, onSelect = { workTab = it; query = "" }, contentColor)
-            when {
-                searching -> SearchResults(results, content, labels, Modifier.weight(1f))
-                workTab && drawerContent.workPaused -> WorkPaused(drawerContent.onUnpauseWork, contentColor, Modifier.weight(1f))
-                workTab -> PagedEntries(drawerContent.workApps.map { DrawerEntry.App(it) }, drawerContent, content, labels, Modifier.weight(1f))
-                else -> PagedEntries(drawerContent.entries, drawerContent, content, labels, Modifier.weight(1f))
+            // The search field rides on top of the keyboard; the pages stay put under it, only
+            // search results make room for it.
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .then(if (searching) Modifier.imePadding() else Modifier)
+                    .padding(bottom = SEARCH_AREA_HEIGHT),
+            ) {
+                TopBar(drawerContent.hasWorkProfile, workTab, onSelect = { workTab = it; query = "" }, contentColor)
+                when {
+                    searching -> SearchResults(results, content, labels, Modifier.weight(1f))
+                    workTab && drawerContent.workPaused -> WorkPaused(drawerContent.onUnpauseWork, contentColor, Modifier.weight(1f))
+                    workTab -> PagedEntries(drawerContent.workApps.map { DrawerEntry.App(it) }, drawerContent, content, labels, Modifier.weight(1f))
+                    else -> PagedEntries(drawerContent.entries, drawerContent, content, labels, Modifier.weight(1f))
+                }
             }
             // While an app is dragged, the search field turns into the "to home screen" drop zone.
             val dragSource = state.drag?.source
             val showToHome = state.dragInDrawer && !state.layoutLocked && dragSource != null &&
                 dragSource !is DragSource.DrawerFolderEntry
-            Box(Modifier.padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 10.dp)) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .imePadding()
+                    .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 10.dp),
+            ) {
                 if (showToHome) {
                     ToHomeZone(state, Modifier.fillMaxWidth())
                 } else {
@@ -195,7 +207,7 @@ private fun TopBar(hasWorkProfile: Boolean, workTab: Boolean, onSelect: (Boolean
     var menuOpen by remember { mutableStateOf(false) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().height(48.dp).padding(start = 12.dp),
+        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 4.dp, end = 8.dp).height(48.dp),
     ) {
         if (hasWorkProfile) {
             listOf(false to R.string.tab_personal, true to R.string.tab_work).forEach { (work, label) ->
@@ -316,6 +328,9 @@ private fun DrawerSearchBar(query: String, onQueryChange: (String) -> Unit, dark
 /** Width of the idle search pill (One UI). */
 private val SEARCH_SHORT_WIDTH = 244.dp
 
+/** Height under the pages kept for the search pill (52dp and its padding). */
+private val SEARCH_AREA_HEIGHT = 66.dp
+
 @Composable
 private fun WorkPaused(onUnpause: () -> Unit, color: Color, modifier: Modifier) {
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -362,7 +377,7 @@ private fun PagedEntries(
 
 @Composable
 private fun EntryPage(entries: List<DrawerEntry<AppEntry>>, columns: Int, rows: Int, content: HomeContent, labels: LabelStyle) {
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().padding(start = 8.dp, end = 8.dp, top = 8.dp)) {
         repeat(rows) { row ->
             Row(Modifier.weight(1f).fillMaxWidth()) {
                 repeat(columns) { column ->
