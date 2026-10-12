@@ -108,20 +108,22 @@ fun AppDrawer(
                     translationY = drawer.enterDirection * (1f - p) * enterOffsetPx
                 }
                 .windowInsetsPadding(WindowInsets.systemBars)
+                // The search field sits at the bottom and rides on top of the keyboard.
+                .imePadding()
                 .padding(horizontal = 8.dp),
         ) {
-            SearchField(
-                query = query,
-                onQueryChange = { query = it },
-                contentColor = contentColor,
-                onGo = { results.firstOrNull()?.let { actions.launch(it, null) } },
-                modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 8.dp),
-            )
             if (query.isBlank()) {
                 PagedApps(apps, actions, contentColor, Modifier.weight(1f))
             } else {
                 SearchResults(results, actions, contentColor, Modifier.weight(1f))
             }
+            SearchField(
+                query = query,
+                onQueryChange = { query = it },
+                contentColor = contentColor,
+                onGo = { results.firstOrNull()?.let { actions.launch(it, null) } },
+                modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 12.dp),
+            )
         }
     }
 }
@@ -164,7 +166,7 @@ private fun AppPage(apps: List<AppEntry>, actions: AppActions, contentColor: Col
 
 @Composable
 private fun SearchResults(results: List<AppEntry>, actions: AppActions, contentColor: Color, modifier: Modifier) {
-    Box(modifier.fillMaxWidth().imePadding()) {
+    Box(modifier.fillMaxWidth()) {
         if (results.isEmpty()) {
             Text(
                 text = stringResource(R.string.search_nothing_found),
