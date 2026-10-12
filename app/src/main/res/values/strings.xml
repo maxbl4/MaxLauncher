@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MaxLauncher</string>
+    <string name="search_hint">Поиск</string>
+    <string name="search_nothing_found">Ничего не найдено</string>
+    <string name="menu_app_info">О приложении</string>
+    <string name="menu_uninstall">Удалить</string>
+</resources>

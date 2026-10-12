@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+build/
+
+# Released APKs
+dist/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Android / IDE
+local.properties
+*.iml
+.idea/
+.kotlin/
+captures/
+.cxx/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Signing / secrets
+*.keystore
+*.jks
+keystore.properties
