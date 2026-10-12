@@ -23,10 +23,10 @@ class MainActivity : ComponentActivity() {
         // The home activity must never finish on Back; screens register their own handlers on top.
         onBackPressedDispatcher.addCallback(this) {}
 
-        val repository = (application as LauncherApplication).appRepository
+        val app = application as LauncherApplication
         setContent {
             LauncherTheme {
-                LauncherScreen(repository, homePresses)
+                LauncherScreen(app.appRepository, app.homeRepository, homePresses)
             }
         }
     }

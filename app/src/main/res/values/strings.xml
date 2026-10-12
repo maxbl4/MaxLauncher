@@ -3,6 +3,30 @@
     <string name="app_name">MaxLauncher</string>
     <string name="search_hint">Поиск</string>
     <string name="search_nothing_found">Ничего не найдено</string>
+
     <string name="menu_app_info">О приложении</string>
     <string name="menu_uninstall">Удалить</string>
+    <string name="menu_add_to_home">Добавить на главный экран</string>
+    <string name="menu_remove_from_home">Убрать с экрана</string>
+    <string name="menu_remove_from_folder">Убрать из папки</string>
+    <string name="menu_delete_folder">Удалить папку</string>
+
+    <string name="drop_remove">Убрать</string>
+
+    <string name="folder_name_hint">Папка</string>
+    <string name="folder_add_apps">Добавить</string>
+    <string name="picker_title">Приложения в папке</string>
+    <string name="picker_done">Готово</string>
+    <string name="picker_cancel">Отмена</string>
+
+    <string name="edit_wallpaper">Обои</string>
+    <string name="edit_home_page">Сделать главной</string>
+    <string name="edit_delete_page">Удалить страницу</string>
+    <string name="edit_add_page_left">Добавить страницу слева</string>
+    <string name="edit_add_page_right">Добавить страницу справа</string>
+    <string name="delete_page_title">Удалить страницу?</string>
+    <string name="delete_page_text">Значки и папки на этой странице будут убраны с главного экрана.</string>
+    <string name="delete_page_confirm">Удалить</string>
+
+    <string name="shortcut_added">Ярлык добавлен на главный экран</string>
 </resources>

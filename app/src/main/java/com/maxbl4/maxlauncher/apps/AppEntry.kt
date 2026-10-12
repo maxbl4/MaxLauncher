@@ -5,6 +5,7 @@ import android.content.pm.ShortcutInfo
 import android.os.UserHandle
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.ImageBitmap
+import com.maxbl4.maxlauncher.home.AppRef
 
 /** Identifies a launchable activity in a given user profile. */
 @Immutable
@@ -18,13 +19,17 @@ data class AppKey(val component: ComponentName, val user: UserHandle) {
 @Immutable
 data class AppEntry(
     val key: AppKey,
+    /** Persistent reference used by the home screen layout. */
+    val ref: AppRef,
     val label: String,
     val icon: ImageBitmap,
     val isSystem: Boolean,
     val isWork: Boolean,
 )
 
-/** An app shortcut shown in the long-press menu. */
+data class PackageRemoval(val packageName: String, val userSerial: Long)
+
+/** An app shortcut: shown in the long-press menu, or pinned to the home screen. */
 @Immutable
 data class AppShortcut(
     val info: ShortcutInfo,

@@ -70,10 +70,11 @@ private const val PAGE_SIZE = DRAWER_COLUMNS * DRAWER_ROWS
 @Composable
 fun AppDrawer(
     apps: List<AppEntry>,
-    drawer: DrawerState,
+    state: LauncherState,
     actions: AppActions,
     modifier: Modifier = Modifier,
 ) {
+    val drawer = state.drawer
     val dark = isSystemInDarkTheme()
     val scrim = if (dark) Color(0xFF101010).copy(alpha = 0.75f) else Color(0xFFF2F2F2).copy(alpha = 0.9f)
     val contentColor = if (dark) Color(0xFFF2F2F2) else Color(0xFF1A1A1A)
@@ -113,9 +114,9 @@ fun AppDrawer(
                 .padding(horizontal = 8.dp),
         ) {
             if (query.isBlank()) {
-                PagedApps(apps, actions, contentColor, Modifier.weight(1f))
+                PagedApps(apps, state, actions, contentColor, Modifier.weight(1f))
             } else {
-                SearchResults(results, actions, contentColor, Modifier.weight(1f))
+                SearchResults(results, state, actions, contentColor, Modifier.weight(1f))
             }
             SearchField(
                 query = query,
@@ -129,7 +130,7 @@ fun AppDrawer(
 }
 
 @Composable
-private fun PagedApps(apps: List<AppEntry>, actions: AppActions, contentColor: Color, modifier: Modifier) {
+private fun PagedApps(apps: List<AppEntry>, state: LauncherState, actions: AppActions, contentColor: Color, modifier: Modifier) {
     val pageCount = maxOf(1, (apps.size + PAGE_SIZE - 1) / PAGE_SIZE)
     val pagerState = rememberPagerState { pageCount }
     Column(modifier) {
@@ -141,21 +142,21 @@ private fun PagedApps(apps: List<AppEntry>, actions: AppActions, contentColor: C
         ) { page ->
             val from = page * PAGE_SIZE
             val pageApps = if (from < apps.size) apps.subList(from, minOf(from + PAGE_SIZE, apps.size)) else emptyList()
-            AppPage(pageApps, actions, contentColor)
+            AppPage(pageApps, state, actions, contentColor)
         }
         PageIndicator(pageCount, pagerState.currentPage, contentColor)
     }
 }
 
 @Composable
-private fun AppPage(apps: List<AppEntry>, actions: AppActions, contentColor: Color) {
+private fun AppPage(apps: List<AppEntry>, state: LauncherState, actions: AppActions, contentColor: Color) {
     Column(Modifier.fillMaxSize()) {
         repeat(DRAWER_ROWS) { row ->
             Row(Modifier.weight(1f).fillMaxWidth()) {
                 repeat(DRAWER_COLUMNS) { column ->
                     Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
                         apps.getOrNull(row * DRAWER_COLUMNS + column)?.let { entry ->
-                            AppIcon(entry, actions, contentColor)
+                            AppIcon(entry, actions, LabelStyle(contentColor, shadow = false), Modifier.registerSource(state, Layer.DRAWER, DragSource.DrawerApp(entry)))
                         }
                     }
                 }
@@ -165,7 +166,7 @@ private fun AppPage(apps: List<AppEntry>, actions: AppActions, contentColor: Col
 }
 
 @Composable
-private fun SearchResults(results: List<AppEntry>, actions: AppActions, contentColor: Color, modifier: Modifier) {
+private fun SearchResults(results: List<AppEntry>, state: LauncherState, actions: AppActions, contentColor: Color, modifier: Modifier) {
     Box(modifier.fillMaxWidth()) {
         if (results.isEmpty()) {
             Text(
@@ -181,7 +182,7 @@ private fun SearchResults(results: List<AppEntry>, actions: AppActions, contentC
             ) {
                 items(results, key = { it.key.id }) { entry ->
                     Box(Modifier.height(104.dp), contentAlignment = Alignment.Center) {
-                        AppIcon(entry, actions, contentColor)
+                        AppIcon(entry, actions, LabelStyle(contentColor, shadow = false), Modifier.registerSource(state, Layer.DRAWER, DragSource.DrawerApp(entry)))
                     }
                 }
             }

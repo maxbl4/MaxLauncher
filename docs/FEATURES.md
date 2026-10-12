@@ -144,7 +144,7 @@
 |---|---|
 | Язык | Kotlin |
 | UI | Jetpack Compose (Material 3) |
-| Хранение раскладки | Room (SQLite) |
+| Хранение раскладки | JSON-файл (kotlinx.serialization), атомарная запись |
 | Настройки | DataStore |
 | Асинхронность | Coroutines + Flow |
 | minSdk / targetSdk | 31 (Android 12) / последний стабильный |

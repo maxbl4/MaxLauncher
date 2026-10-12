@@ -14,16 +14,22 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Process
 import android.os.UserHandle
+import android.os.UserManager
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
+import com.maxbl4.maxlauncher.home.AppRef
+import com.maxbl4.maxlauncher.home.ShortcutItem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -38,6 +44,7 @@ import kotlin.math.roundToInt
 class AppRepository(private val context: Context) {
 
     private val launcherApps = context.getSystemService(LauncherApps::class.java)
+    private val userManager = context.getSystemService(UserManager::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mutex = Mutex()
     private val entries = HashMap<AppKey, AppEntry>()
@@ -48,8 +55,16 @@ class AppRepository(private val context: Context) {
     private val _apps = MutableStateFlow<List<AppEntry>>(emptyList())
     val apps: StateFlow<List<AppEntry>> = _apps.asStateFlow()
 
+    private val _packageRemovals = MutableSharedFlow<PackageRemoval>(extraBufferCapacity = 16)
+
+    /** Packages uninstalled from a profile (not emitted for updates). */
+    val packageRemovals: SharedFlow<PackageRemoval> = _packageRemovals.asSharedFlow()
+
     private val callback = object : LauncherApps.Callback() {
-        override fun onPackageRemoved(packageName: String, user: UserHandle) = reloadPackage(packageName, user)
+        override fun onPackageRemoved(packageName: String, user: UserHandle) {
+            _packageRemovals.tryEmit(PackageRemoval(packageName, userManager.getSerialNumberForUser(user)))
+            reloadPackage(packageName, user)
+        }
         override fun onPackageAdded(packageName: String, user: UserHandle) = reloadPackage(packageName, user)
         override fun onPackageChanged(packageName: String, user: UserHandle) = reloadPackage(packageName, user)
         override fun onPackagesAvailable(packageNames: Array<String>, user: UserHandle, replacing: Boolean) = reloadAll()
@@ -101,6 +116,7 @@ class AppRepository(private val context: Context) {
         }
         entries[key] = AppEntry(
             key = key,
+            ref = AppRef(info.componentName.flattenToString(), userManager.getSerialNumberForUser(info.user)),
             label = info.label.toString().trim(),
             icon = drawable.toBitmap(iconSizePx, iconSizePx).asImageBitmap(),
             isSystem = info.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0,
@@ -156,6 +172,43 @@ class AppRepository(private val context: Context) {
                 )
             }
     }
+
+    /** Resolves pinned shortcuts placed on the home screen; missing or revoked ones are left out. */
+    suspend fun pinnedShortcuts(items: List<ShortcutItem>): Map<Long, AppShortcut> = withContext(Dispatchers.IO) {
+        if (items.isEmpty() || !launcherApps.hasShortcutHostPermission()) return@withContext emptyMap()
+        val result = HashMap<Long, AppShortcut>()
+        items.groupBy { it.packageName to it.userSerial }.forEach { (key, group) ->
+            val (packageName, serial) = key
+            val user = userManager.getUserForSerialNumber(serial) ?: return@forEach
+            val query = LauncherApps.ShortcutQuery()
+                .setPackage(packageName)
+                .setShortcutIds(group.map { it.shortcutId })
+                .setQueryFlags(LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED)
+            val infos = runCatching { launcherApps.getShortcuts(query, user) }
+                .onFailure { Log.w(TAG, "getShortcuts failed for $packageName", it) }
+                .getOrNull().orEmpty()
+                .associateBy { it.id }
+            for (item in group) {
+                val info = infos[item.shortcutId] ?: continue
+                result[item.id] = AppShortcut(
+                    info = info,
+                    label = (info.shortLabel ?: info.longLabel ?: item.label).toString(),
+                    icon = runCatching { launcherApps.getShortcutIconDrawable(info, densityDpi) }.getOrNull()
+                        ?.toBitmap(iconSizePx, iconSizePx)?.asImageBitmap(),
+                )
+            }
+        }
+        result
+    }
+
+    /** Tells the system which shortcuts of a package are still pinned on the home screen. */
+    fun setPinnedShortcuts(packageName: String, userSerial: Long, shortcutIds: List<String>) {
+        val user = userManager.getUserForSerialNumber(userSerial) ?: return
+        runCatching { launcherApps.pinShortcuts(packageName, shortcutIds, user) }
+            .onFailure { Log.w(TAG, "pinShortcuts failed for $packageName", it) }
+    }
+
+    fun userSerial(user: UserHandle): Long = userManager.getSerialNumberForUser(user)
 
     private fun runAction(action: () -> Unit) {
         try {
