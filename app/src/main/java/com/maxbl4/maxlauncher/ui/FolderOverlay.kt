@@ -106,7 +106,7 @@ fun FolderPanel(
     val cardColor = if (dark) Color(0x4D000000) else Color(0xFFF7F7F7)
     val scrimColor = if (dark) Color(0x1A000000) else Color(0x66000000)
     val textColor = if (dark) Color(0xFFF2F2F2) else Color(0xFF1A1A1A)
-    val labels = LabelStyle(textColor, shadow = dark)
+    val labels = LabelStyle(textColor, shadow = false)
     val sorted = remember(apps) { apps.sortedWith(AppSorting.comparator { it.second.label }) }
     var pickerOpen by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
