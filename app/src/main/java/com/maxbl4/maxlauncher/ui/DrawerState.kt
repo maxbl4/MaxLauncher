@@ -1,8 +1,9 @@
 package com.maxbl4.maxlauncher.ui
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -11,6 +12,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Open/close state of the app drawer. [progress] goes from 0 (closed) to 1 (open) and follows
@@ -48,13 +51,19 @@ class DrawerState(private val scope: CoroutineScope) {
         scope.launch { progress.snapTo(0f) }
     }
 
-    private fun animateTo(open: Boolean, velocity: Float = 0f) {
+    /**
+     * Settles open or closed, moving one way only and slowing down at the end (no spring, so no
+     * overshoot). After a swipe the motion starts at full speed, as if the finger let go of it;
+     * Back / Home ease in and out. The time is proportional to the distance left.
+     */
+    private fun animateTo(open: Boolean, afterSwipe: Boolean = false) {
         isOpen = open
         scope.launch {
+            val target = if (open) 1f else 0f
+            val duration = (FULL_DURATION_MS * abs(target - progress.value)).roundToInt().coerceAtLeast(MIN_DURATION_MS)
             progress.animateTo(
-                targetValue = if (open) 1f else 0f,
-                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                initialVelocity = velocity,
+                targetValue = target,
+                animationSpec = tween(duration, easing = if (afterSwipe) LinearOutSlowInEasing else FastOutSlowInEasing),
             )
         }
     }
@@ -97,13 +106,14 @@ class DrawerState(private val scope: CoroutineScope) {
         } else {
             along > flingVelocity || p > SETTLE_FRACTION
         }
-        // Finger velocity in progress units per second.
-        val progressVelocity = along / distance * if (swipeStartedOpen) -1f else 1f
-        animateTo(shouldOpen, progressVelocity)
+        animateTo(shouldOpen, afterSwipe = true)
     }
 
     private companion object {
         /** Releasing past this fraction of the travel completes the gesture. */
         const val SETTLE_FRACTION = 0.4f
+        /** Time for a full open or close; shorter when part of the way is already done. */
+        const val FULL_DURATION_MS = 320f
+        const val MIN_DURATION_MS = 120
     }
 }
