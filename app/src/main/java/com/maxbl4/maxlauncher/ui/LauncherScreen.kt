@@ -126,7 +126,6 @@ fun LauncherScreen(
     }
     val overlayOpen = state.drawer.isOpen || state.openFolderId != null || state.widgetPickerOpen
     SystemBarsAppearance(darkIcons = if (overlayOpen) !darkTheme else wallpaperDarkText)
-    BackgroundBlur(state)
 
     Box(
         Modifier
@@ -292,24 +291,6 @@ private fun DragOverlay(drag: DragState, content: HomeContent) {
     }
 }
 
-/**
- * Blurs the wallpaper behind the window while the drawer or a folder is open (where the device
- * supports cross-window blur; otherwise only the dimming scrim is visible).
- */
-@Composable
-private fun BackgroundBlur(state: LauncherState) {
-    val activity = LocalActivity.current ?: return
-    val maxRadius = with(LocalDensity.current) { BLUR_RADIUS.toPx() }
-    LaunchedEffect(activity) {
-        snapshotFlow {
-            val folderOpen = state.openFolderId != null || state.openDrawerFolderId != null || state.widgetPickerOpen
-            max(state.drawer.progress.value, if (folderOpen) 1f else 0f)
-        }.collect { p ->
-            activity.window.setBackgroundBlurRadius((p.coerceIn(0f, 1f) * maxRadius).roundToInt())
-        }
-    }
-}
-
 /** Dark status/navigation bar icons over a light wallpaper or the light drawer. */
 @Composable
 private fun SystemBarsAppearance(darkIcons: Boolean) {
@@ -345,4 +326,3 @@ private fun rememberWallpaperSupportsDarkText(): Boolean {
 private const val HOME_SHRINK = 0.06f
 private const val DRAG_SCALE = 1.1f
 private const val WALLPAPER_DIM = 0.35f
-private val BLUR_RADIUS = 28.dp
