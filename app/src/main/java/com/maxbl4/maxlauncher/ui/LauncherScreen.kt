@@ -4,6 +4,11 @@ import android.app.WallpaperColors
 import android.app.WallpaperManager
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.Image
@@ -35,6 +40,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
@@ -64,6 +70,7 @@ import com.maxbl4.maxlauncher.home.remove
 import com.maxbl4.maxlauncher.home.renameFolder
 import com.maxbl4.maxlauncher.home.setFolderApps
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -146,6 +153,7 @@ fun LauncherScreen(
     LaunchedEffect(homePresses) { homePresses.collect { state.closeTopmost() } }
     // Coming back to the launcher from an app always lands on the plain home screen.
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { state.reset() }
+    val unlockReveal = rememberUnlockReveal()
     BackHandler(
         enabled = state.menu != null || state.openFolderId != null || state.openDrawerFolderId != null ||
             state.drawer.isOpen || state.editMode || state.resizingWidgetId != null || state.widgetPickerOpen,
@@ -172,9 +180,11 @@ fun LauncherScreen(
                 content = content,
                 modifier = Modifier.graphicsLayer {
                     val p = state.drawer.progress.value
-                    alpha = (1f - p) * (1f - state.homeFolderProgress)
-                    scaleX = 1f - HOME_SHRINK * p
-                    scaleY = 1f - HOME_SHRINK * p
+                    val reveal = unlockReveal.value
+                    val zoom = 1f + UNLOCK_ZOOM * (1f - reveal)
+                    alpha = (1f - p) * (1f - state.homeFolderProgress) * reveal
+                    scaleX = (1f - HOME_SHRINK * p) * zoom
+                    scaleY = (1f - HOME_SHRINK * p) * zoom
                 },
             )
         }
@@ -395,6 +405,31 @@ private fun SystemBarsAppearance(darkIcons: Boolean) {
     }
 }
 
+/**
+ * How far home is shown after the phone was unlocked (0 hidden .. 1 shown). One UI zooms home in
+ * over the wallpaper when coming back from an app, but nothing animates it after unlocking; this
+ * does the same then. Only a stop with the screen off hides home: coming back from apps keeps the
+ * system animation.
+ */
+@Composable
+private fun rememberUnlockReveal(): Animatable<Float, AnimationVector1D> {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val reveal = remember { Animatable(1f) }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        if (context.getSystemService(PowerManager::class.java)?.isInteractive == false) scope.launch { reveal.snapTo(0f) }
+    }
+    // Started is too early: the launcher starts behind the lock screen as the screen wakes. It gets
+    // the focus once the lock screen is gone.
+    val windowInfo = LocalWindowInfo.current
+    LaunchedEffect(windowInfo) {
+        snapshotFlow { windowInfo.isWindowFocused }.collect { focused ->
+            if (focused && reveal.value < 1f) reveal.animateTo(1f, tween(UNLOCK_REVEAL_MS, easing = LinearOutSlowInEasing))
+        }
+    }
+    return reveal
+}
+
 @Composable
 private fun rememberWallpaperSupportsDarkText(): Boolean {
     val context = LocalContext.current
@@ -415,5 +450,8 @@ private fun rememberWallpaperSupportsDarkText(): Boolean {
 }
 
 private const val HOME_SHRINK = 0.06f
+/** After unlocking, home zooms in from this much larger (as One UI does coming back from an app). */
+private const val UNLOCK_ZOOM = 0.2f
+private const val UNLOCK_REVEAL_MS = 400
 private const val DRAG_SCALE = 1.1f
 private const val WALLPAPER_DIM = 0.35f
