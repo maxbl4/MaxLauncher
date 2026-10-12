@@ -2,6 +2,7 @@ package com.maxbl4.maxlauncher.ui
 
 import android.app.WallpaperManager
 import android.content.Intent
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -95,6 +96,8 @@ class HomeContent(
     val labelStyle: LabelStyle,
     val darkTheme: Boolean,
     val widgets: WidgetHostManager,
+    /** An item that is only in the drop preview (an app dragged in from the drawer); not drawn. */
+    val previewHiddenId: Long? = null,
 )
 
 /**
@@ -103,13 +106,18 @@ class HomeContent(
  * long press and drag to reorder; the dock is replaced by the edit bar.
  */
 @Composable
-fun HomeScreen(layout: HomeLayout, home: HomeRepository, content: HomeContent, modifier: Modifier = Modifier) {
+fun HomeScreen(
+    layout: HomeLayout,
+    /** Icons in the dock without the drop preview, which drops are mapped against. */
+    baseDockSize: Int,
+    home: HomeRepository,
+    content: HomeContent,
+    modifier: Modifier = Modifier,
+) {
     val state = content.state
     val pagerState = rememberPagerState(initialPage = layout.homePageIndex) { layout.pages.size }
     val currentLayout by rememberUpdatedState(layout)
     val editProgress by animateFloatAsState(if (state.editMode) 1f else 0f, label = "edit")
-    // Pages added by dragging an item past the last page; removed again if left empty.
-    val dragPages = remember { mutableSetOf<Long>() }
     var focusPageId by remember { mutableStateOf<Long?>(null) }
 
     SideEffect {
@@ -120,17 +128,10 @@ fun HomeScreen(layout: HomeLayout, home: HomeRepository, content: HomeContent, m
             if (target >= currentLayout.pages.size) {
                 // Past the last page: add a new one, unless the last page is still empty.
                 if (!mayAddPage || currentLayout.pages.last().items.isEmpty()) return@edge
-                home.update { l -> l.addPage(l.pages.size).also { dragPages += it.first }.second }
+                home.update { l -> l.addPage(l.pages.size).second }
                 snapshotFlow { pagerState.pageCount }.first { it > target }
             }
             pagerState.animateScrollToPage(target)
-        }
-        state.onDragFinished = {
-            val ids = dragPages.toSet()
-            dragPages.clear()
-            home.update { l ->
-                ids.fold(l) { acc, id -> if (acc.pages.firstOrNull { it.id == id }?.items?.isEmpty() == true) acc.removePage(id) else acc }
-            }
         }
         state.onPageDrop = { pageId ->
             home.update { l -> l.movePage(l.pages.indexOfFirst { it.id == pageId }, pagerState.currentPage) }
@@ -183,11 +184,13 @@ fun HomeScreen(layout: HomeLayout, home: HomeRepository, content: HomeContent, m
         if (state.editMode) {
             EditBar(state, content.labelStyle.color)
         } else {
+            // The dock is a row: however many icons, they spread evenly over the width.
             ItemGrid(
                 container = Container.Dock,
                 items = layout.dock,
-                columns = layout.dockSlots,
+                columns = maxOf(1, layout.dock.size),
                 rows = 1,
+                hitColumns = maxOf(1, baseDockSize),
                 home = home,
                 content = content,
                 modifier = Modifier.fillMaxWidth().height(104.dp).padding(horizontal = 8.dp),
@@ -328,12 +331,13 @@ private fun ItemGrid(
     home: HomeRepository,
     content: HomeContent,
     modifier: Modifier = Modifier,
+    hitColumns: Int = columns,
 ) {
     val state = content.state
     DisposableEffect(container) { onDispose { state.unregisterGrid(container) } }
     BoxWithConstraints(
         modifier
-            .onGloballyPositioned { state.registerGrid(container, columns, rows, it.boundsInRoot(), it.size.toSize()) }
+            .onGloballyPositioned { state.registerGrid(container, hitColumns, rows, it.boundsInRoot(), it.size.toSize()) }
             .then(
                 if (state.resizingWidgetId != null) {
                     Modifier.pointerInput(Unit) { detectTapGestures { state.resizingWidgetId = null } }
@@ -346,9 +350,7 @@ private fun ItemGrid(
         val cellHeight = maxHeight / rows
         val hover = state.hover as? DropTarget.Cell
         if (hover != null && hover.container == container) {
-            val draggedPlaced = (state.drag?.source as? DragSource.HomeEntry)?.item?.let { item -> items.firstOrNull { it.item.id == item.id } }
-            val spanX = if (draggedPlaced?.item is WidgetItem) draggedPlaced.spanX else 1
-            val spanY = if (draggedPlaced?.item is WidgetItem) draggedPlaced.spanY else 1
+            val (spanX, spanY) = state.draggedWidgetSpans ?: (1 to 1)
             val x = hover.x.coerceAtMost(columns - spanX)
             val y = hover.y.coerceAtMost(rows - spanY)
             Box(
@@ -361,9 +363,12 @@ private fun ItemGrid(
         }
         for (placed in items) {
             key(placed.item.id) {
+                // Icons glide to new cells when a dragged icon pushes them aside.
+                val x by animateDpAsState(cellWidth * placed.x, label = "x")
+                val y by animateDpAsState(cellHeight * placed.y, label = "y")
                 Box(
                     Modifier
-                        .offset(cellWidth * placed.x, cellHeight * placed.y)
+                        .offset(x, y)
                         .size(cellWidth * placed.spanX, cellHeight * placed.spanY),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -386,7 +391,7 @@ private fun HomeItemView(item: HomeItem, content: HomeContent) {
     val source = DragSource.HomeEntry(item)
     val modifier = Modifier
         .registerSource(state, Layer.HOME, source)
-        .alpha(if (state.isDragged(source)) 0f else 1f)
+        .alpha(if (state.isDragged(source) || item.id == content.previewHiddenId) 0f else 1f)
     when (item) {
         is AppItem -> {
             val entry = content.appsByRef[item.app] ?: return

@@ -92,7 +92,8 @@ data class HomeLayout(
 
     fun withItems(container: Container, items: List<Placed>): HomeLayout = when (container) {
         is Container.Page -> copy(pages = pages.map { if (it.id == container.pageId) it.copy(items = items) else it })
-        Container.Dock -> copy(dock = items)
+        // The dock is an ordered row: x is the position, kept contiguous.
+        Container.Dock -> copy(dock = items.sortedBy { it.x }.mapIndexed { i, p -> p.copy(x = i, y = 0) })
     }
 
     fun itemAt(container: Container, x: Int, y: Int): Placed? = items(container).firstOrNull { it.covers(x, y) }

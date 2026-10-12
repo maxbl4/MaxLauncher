@@ -214,9 +214,13 @@ private fun loadOptions(context: Context, widgets: WidgetHostManager, cell: Size
     }.sortedWith(AppSorting.comparator<WidgetOption> { it.appLabel }.thenBy { it.label })
 }
 
-/** Full-screen list of widgets grouped by app; tapping one adds it to the current page. */
+/**
+ * Full-screen list of widgets grouped by app, with search. Tapping one adds it to the current
+ * page; a long press picks it up to drop it where it should go.
+ */
 @Composable
 fun WidgetPicker(
+    state: LauncherState,
     widgets: WidgetHostManager,
     cell: Size,
     columns: Int,
@@ -284,6 +288,7 @@ fun WidgetPicker(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
+                            .registerSource(state, Layer.WIDGET_PICKER, DragSource.NewWidget(option))
                             .fillMaxWidth()
                             .clickable { onPick(option) }
                             .padding(horizontal = 24.dp, vertical = 8.dp),

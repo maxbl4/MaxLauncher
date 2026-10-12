@@ -77,6 +77,7 @@ fun ItemMenu(
                 is DragSource.DrawerFolderEntry -> entry(R.string.menu_delete_folder) {
                     drawer.update { it.deleteFolder(source.folder.id) }
                 }
+                is DragSource.NewWidget -> Unit
                 is DragSource.HomeEntry -> when (val item = source.item) {
                     is AppItem -> {
                         val removeEntry: @Composable () -> Unit = {

@@ -71,14 +71,14 @@
         </service>
 
         <activity
-            android:name=".PinShortcutActivity"
+            android:name=".PinItemActivity"
             android:excludeFromRecents="true"
             android:exported="true"
-            android:noHistory="true"
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
                 <action android:name="android.content.pm.action.CONFIRM_PIN_SHORTCUT" />
+                <action android:name="android.content.pm.action.CONFIRM_PIN_APPWIDGET" />
             </intent-filter>
         </activity>
     </application>

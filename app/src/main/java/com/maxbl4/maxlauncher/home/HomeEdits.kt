@@ -23,11 +23,26 @@ fun HomeLayout.remove(itemId: Long): HomeLayout {
 }
 
 /**
- * Drops [item] (not yet in the layout) onto a cell. An app dropped onto another app creates a
- * folder; onto a folder it joins the folder. Otherwise the item takes the cell (the area, for
- * widgets), or the nearest free one. Returns null when the container has no room.
+ * Drops [item] (not yet in the layout) onto a cell.
+ *
+ * With [merge], an app dropped onto another app creates a folder and onto a folder joins it.
+ * Otherwise an icon dropped onto an occupied cell takes it and pushes the following icons aside
+ * (in reading order, skipping widgets); widgets take the nearest free area.
+ *
+ * In the dock (an ordered row) [x] is an index: with [merge] the icon at that index, otherwise
+ * the position to insert at.
+ *
+ * Returns null when the container has no room.
  */
-fun HomeLayout.drop(item: HomeItem, container: Container, x: Int, y: Int, spanX: Int = 1, spanY: Int = 1): HomeLayout? {
+fun HomeLayout.drop(
+    item: HomeItem,
+    container: Container,
+    x: Int,
+    y: Int,
+    spanX: Int = 1,
+    spanY: Int = 1,
+    merge: Boolean = true,
+): HomeLayout? {
     if (!exists(container)) return null
     // Widgets live on pages only.
     if (item is WidgetItem && container !is Container.Page) return null
@@ -36,7 +51,7 @@ fun HomeLayout.drop(item: HomeItem, container: Container, x: Int, y: Int, spanX:
     val cx = x.coerceIn(0, columns - spanX)
     val cy = y.coerceIn(0, rows - spanY)
 
-    if (spanX == 1 && spanY == 1 && item is AppItem) {
+    if (merge && spanX == 1 && spanY == 1 && item is AppItem) {
         val occupant = itemAt(container, cx, cy)
         when (val target = occupant?.item) {
             is AppItem -> {
@@ -51,22 +66,71 @@ fun HomeLayout.drop(item: HomeItem, container: Container, x: Int, y: Int, spanX:
             else -> Unit
         }
     }
-    val (fx, fy) = if (isAreaFree(container, cx, cy, spanX, spanY)) cx to cy
-    else nearestFreeArea(container, cx, cy, spanX, spanY) ?: return null
+    if (container == Container.Dock) return insertIntoDock(item, x)
+    if (isAreaFree(container, cx, cy, spanX, spanY)) {
+        return withItems(container, items(container) + Placed(item, cx, cy, spanX, spanY))
+    }
+    if (spanX == 1 && spanY == 1) insertPushing(item, container, cx, cy)?.let { return it }
+    val (fx, fy) = nearestFreeArea(container, cx, cy, spanX, spanY) ?: return null
     return withItems(container, items(container) + Placed(item, fx, fy, spanX, spanY))
 }
 
 /** Moves an existing item (top-level or from a folder) to a cell; unchanged when it does not fit. */
-fun HomeLayout.move(itemId: Long, container: Container, x: Int, y: Int): HomeLayout {
+fun HomeLayout.move(itemId: Long, container: Container, x: Int, y: Int, merge: Boolean = true): HomeLayout {
     val item = findItem(itemId) ?: return this
-    val source = findPlaced(itemId)?.second
-    val spanX = source?.spanX ?: 1
-    val spanY = source?.spanY ?: 1
+    val source = findPlaced(itemId)
+    val spanX = source?.second?.spanX ?: 1
+    val spanY = source?.second?.spanY ?: 1
     val occupant = itemAt(container, x, y)?.item
     // Dropping an icon onto itself, or an app back onto its own folder, changes nothing.
     if (spanX == 1 && spanY == 1 && occupant?.id == itemId) return this
     if (occupant is FolderItem && occupant.apps.any { it.id == itemId }) return this
-    return remove(itemId).drop(item, container, x, y, spanX, spanY) ?: this
+    // Within the dock, indexes after the moved icon shift left once it is taken out.
+    val target = if (container == Container.Dock && source?.first == Container.Dock && source.second.x < x) x - 1 else x
+    return remove(itemId).drop(item, container, target, y, spanX, spanY, merge) ?: this
+}
+
+/** Inserts an icon into the dock at [index], shifting the following ones; null when the dock is full. */
+private fun HomeLayout.insertIntoDock(item: HomeItem, index: Int): HomeLayout? {
+    val row = dock.sortedBy { it.x }
+    if (row.size >= dockSlots) return null
+    val at = index.coerceIn(0, row.size)
+    val inserted = row.take(at) + Placed(item, at, 0) + row.drop(at)
+    return withItems(Container.Dock, inserted.mapIndexed { i, p -> p.copy(x = i) })
+}
+
+/**
+ * Puts a one-cell [item] at (x, y) and shifts the icons from there on by one cell in reading
+ * order until a free cell absorbs them; when there is none after (x, y), the icons before it
+ * shift back instead. Cells under widgets are skipped and widgets never move. Null when full.
+ */
+private fun HomeLayout.insertPushing(item: HomeItem, container: Container, x: Int, y: Int): HomeLayout? {
+    val (columns, rows) = size(container)
+    val list = items(container)
+    val widgets = list.filter { it.spanX > 1 || it.spanY > 1 }
+    val cells = (0 until rows).flatMap { r -> (0 until columns).map { c -> c to r } }
+        .filter { (c, r) -> widgets.none { it.covers(c, r) } }
+    val start = cells.indexOf(x to y)
+    if (start < 0) return null
+    val iconAt = list.filter { it.spanX == 1 && it.spanY == 1 }.associateBy { it.x to it.y }
+    fun free(i: Int) = iconAt[cells[i]] == null
+
+    val moves = HashMap<Long, Pair<Int, Int>>()
+    val forward = (start + 1 until cells.size).firstOrNull(::free)
+    if (forward != null) {
+        for (i in start until forward) moves[iconAt.getValue(cells[i]).item.id] = cells[i + 1]
+    } else {
+        val backward = (start - 1 downTo 0).firstOrNull(::free) ?: return null
+        for (i in backward + 1..start) moves[iconAt.getValue(cells[i]).item.id] = cells[i - 1]
+    }
+    val shifted = list.map { p -> moves[p.item.id]?.let { (nx, ny) -> p.copy(x = nx, y = ny) } ?: p }
+    return withItems(container, shifted + Placed(item, x, y))
+}
+
+/** Removes pages without items, except the home page; there is always at least one page. */
+fun HomeLayout.removeEmptyPages(): HomeLayout {
+    val kept = pages.filter { it.items.isNotEmpty() || it.id == homePageId }
+    return if (kept.size == pages.size || kept.isEmpty()) this else copy(pages = kept)
 }
 
 /** Moves and/or resizes a widget; unchanged when the area is outside the grid or taken. */
@@ -94,11 +158,15 @@ fun HomeLayout.addWidget(
     spanX: Int,
     spanY: Int,
     preferredPageId: Long,
+    cell: Pair<Int, Int>? = null,
 ): HomeLayout {
     val (id, layout) = allocateId()
     val w = spanX.coerceIn(1, columns)
     val h = spanY.coerceIn(1, rows)
-    return layout.placeAnywhere(WidgetItem(id, appWidgetId, provider, userSerial), preferredPageId, w, h)
+    val item = WidgetItem(id, appWidgetId, provider, userSerial)
+    // Dropped at a spot: there, or as close as it fits on that page.
+    if (cell != null) layout.drop(item, Container.Page(preferredPageId), cell.first, cell.second, w, h, merge = false)?.let { return it }
+    return layout.placeAnywhere(item, preferredPageId, w, h)
 }
 
 /** Replaces the folder content with [apps], keeping ids of apps that stay. */

@@ -54,9 +54,55 @@ class HomeEditsTest {
     }
 
     @Test
-    fun shortcutOnOccupiedCellGoesToNearestFreeCell() {
+    fun iconOnOccupiedCellPushesFollowingIcons() {
+        // A shortcut cannot merge, so it takes (0,0) and pushes "a" and "b" one cell on.
         val layout = twoApps().drop(ShortcutItem(7, "p", "s", 0, "S"), page, 0, 0)!!
-        assertEquals(7L, layout.itemAt(page, 0, 1)?.item?.id)
+        assertEquals(listOf(7L, 10L, 11L), (0..2).map { layout.itemAt(page, it, 0)?.item?.id })
+        // Without merging, an app on an app pushes too instead of making a folder.
+        val pushed = twoApps().move(10, page, 1, 0, merge = false)
+        assertEquals(listOf(null, 10L, 11L), (0..2).map { pushed.itemAt(page, it, 0)?.item?.id })
+    }
+
+    @Test
+    fun pushingSkipsWidgetsAndGoesBackwardsWhenTheEndIsFull() {
+        var layout = HomeLayout.initial().copy(columns = 3, rows = 2, nextId = 100)
+        // Row 0: a, b, c. Row 1: a 2x1 widget at (0,1) and d at (2,1). The page is full.
+        layout = layout.withItems(
+            page,
+            listOf(
+                Placed(AppItem(1, ref("a")), 0, 0), Placed(AppItem(2, ref("b")), 1, 0), Placed(AppItem(3, ref("c")), 2, 0),
+                Placed(WidgetItem(4, 9, "p/.W", 0), 0, 1, 2, 1), Placed(AppItem(5, ref("d")), 2, 1),
+            ),
+        )
+        assertNull(layout.drop(ShortcutItem(7, "p", "s", 0, ""), page, 1, 0, merge = false))
+        // Free (0,0): an icon dropped on c (2,0) shifts a and b back to make room.
+        val withGap = layout.remove(1)
+        val result = withGap.drop(ShortcutItem(7, "p", "s", 0, ""), page, 2, 0, merge = false)!!
+        assertEquals(listOf(2L, 3L, 7L), (0..2).map { result.itemAt(page, it, 0)?.item?.id })
+        assertEquals(4L, result.itemAt(page, 1, 1)?.item?.id)
+    }
+
+    @Test
+    fun dockIsAnOrderedRow() {
+        var layout = HomeLayout.initial().copy(nextId = 100)
+        layout = layout.drop(AppItem(1, ref("a")), Container.Dock, 0, 0)!!
+            .drop(AppItem(2, ref("b")), Container.Dock, 5, 0)!! // past the end: appended
+            .drop(AppItem(3, ref("c")), Container.Dock, 1, 0, merge = false)!! // inserted between
+        assertEquals(listOf(1L, 3L, 2L), layout.dock.sortedBy { it.x }.map { it.item.id })
+        // Moving "a" to the slot after "c" (index 2 before it is taken out).
+        val moved = layout.move(1, Container.Dock, 2, 0, merge = false)
+        assertEquals(listOf(3L, 1L, 2L), moved.dock.sortedBy { it.x }.map { it.item.id })
+        // Removing keeps the row contiguous.
+        assertEquals(listOf(0, 1), layout.remove(3).dock.map { it.x })
+    }
+
+    @Test
+    fun emptyPagesAreRemovedButNotTheHomePage() {
+        val (second, withTwo) = HomeLayout.initial().addPage(1)
+        val (third, withThree) = withTwo.addPage(2)
+        val layout = withThree.withItems(Container.Page(third), listOf(Placed(AppItem(50, ref("x")), 0, 0)))
+        assertEquals(listOf(1L, third), layout.removeEmptyPages().pages.map { it.id })
+        assertEquals(listOf(second), layout.setHomePage(second).removePage(1).removePage(third).removeEmptyPages().pages.map { it.id })
     }
 
     @Test

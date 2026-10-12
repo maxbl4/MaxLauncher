@@ -13,6 +13,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -50,6 +51,9 @@ import com.maxbl4.maxlauncher.apps.AppShortcut
 import com.maxbl4.maxlauncher.drawer.DrawerLayout
 import com.maxbl4.maxlauncher.drawer.buildDrawerEntries
 import com.maxbl4.maxlauncher.home.AppItem
+import com.maxbl4.maxlauncher.home.AppRef
+import com.maxbl4.maxlauncher.home.Container
+import com.maxbl4.maxlauncher.home.removeEmptyPages
 import com.maxbl4.maxlauncher.home.FolderItem
 import com.maxbl4.maxlauncher.home.HomeLayout
 import com.maxbl4.maxlauncher.home.ShortcutItem
@@ -67,7 +71,7 @@ import kotlin.math.roundToInt
 fun LauncherScreen(
     app: LauncherApplication,
     homePresses: Flow<Unit>,
-    onAddWidget: (WidgetOption, pageId: Long) -> Unit,
+    onAddWidget: (WidgetOption, pageId: Long, cell: Pair<Int, Int>?) -> Unit,
     onLockScreen: () -> Unit,
 ) {
     val appRepository = app.appRepository
@@ -91,7 +95,17 @@ fun LauncherScreen(
     val darkTheme = isSystemInDarkTheme()
     val wallpaperDarkText = rememberWallpaperSupportsDarkText()
     val homeLabels = if (wallpaperDarkText) LabelStyle(Color(0xFF1A1A1A), shadow = false) else LabelStyle(Color.White, shadow = true)
-    val content = HomeContent(state, actions, appsByRef, shortcuts, homeLabels, darkTheme, app.widgets)
+    val currentLayout = layout
+    // While an icon is held over an occupied cell, the others move aside to show where it will go.
+    val dragSource = state.drag?.source
+    val hover = state.hover as? DropTarget.Cell
+    val shownLayout = remember(currentLayout, dragSource, hover) {
+        if (currentLayout == null || dragSource == null || hover == null || hover.merge) currentLayout
+        else currentLayout.withDrop(dragSource, hover)
+    }
+    // An app dragged in from the drawer gets the next id in the preview; it is drawn by the drag overlay.
+    val previewHiddenId = if (dragSource is DragSource.DrawerApp || dragSource is DragSource.DrawerFolderApp) currentLayout?.nextId else null
+    val content = HomeContent(state, actions, appsByRef, shortcuts, homeLabels, darkTheme, app.widgets, previewHiddenId)
 
     val drawerContent = remember(apps, drawerLayout, settings, workPaused) {
         val hidden = settings.hiddenApps
@@ -113,7 +127,18 @@ fun LauncherScreen(
         state.layoutLocked = settings.lockLayout
         state.doubleTapToLock = settings.doubleTapToLock
         state.onDoubleTap = onLockScreen
-        state.onDrop = { source, target -> applyDrop(app, source, target) }
+        state.onDrop = { source, target ->
+            if (source is DragSource.NewWidget && target is DropTarget.Cell && target.container is Container.Page) {
+                onAddWidget(source.option, target.container.pageId, target.x to target.y)
+            } else {
+                applyDrop(app, source, target)
+            }
+        }
+    }
+    // Pages left empty disappear once editing and dragging are over (the home page stays).
+    val idle = !state.editMode && state.drag == null && state.pageDrag == null
+    LaunchedEffect(currentLayout, idle) {
+        if (idle) homeRepository.update { it.removeEmptyPages() }
     }
     LaunchedEffect(homePresses) { homePresses.collect { state.closeTopmost() } }
     // Coming back to the launcher from an app always lands on the plain home screen.
@@ -136,10 +161,10 @@ fun LauncherScreen(
         if (settings.dimWallpaperInDark && darkTheme) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = WALLPAPER_DIM)))
         }
-        val currentLayout = layout
-        if (currentLayout != null) {
+        if (shownLayout != null && currentLayout != null) {
             HomeScreen(
-                layout = currentLayout,
+                layout = shownLayout,
+                baseDockSize = currentLayout.dock.size,
                 home = homeRepository,
                 content = content,
                 modifier = Modifier.graphicsLayer {
@@ -157,6 +182,7 @@ fun LauncherScreen(
 
         if (state.widgetPickerOpen && currentLayout != null) {
             WidgetPicker(
+                state = state,
                 widgets = app.widgets,
                 cell = state.homeCellSize() ?: Size.Zero,
                 columns = currentLayout.columns,
@@ -165,7 +191,7 @@ fun LauncherScreen(
                 onPick = { option ->
                     state.widgetPickerOpen = false
                     state.editMode = false
-                    onAddWidget(option, state.currentHomePageId ?: currentLayout.homePageId)
+                    onAddWidget(option, state.currentHomePageId ?: currentLayout.homePageId, null)
                 },
                 onClose = { state.widgetPickerOpen = false },
             )
@@ -177,13 +203,25 @@ fun LauncherScreen(
     }
 }
 
+/**
+ * Keeps showing the last opened folder while it plays its closing animation after
+ * [openId] became null. Returns the id to show, or null when nothing is shown.
+ */
+@Composable
+private fun rememberShownFolder(openId: Long?): Pair<Long?, () -> Unit> {
+    var closingId by remember { mutableStateOf<Long?>(null) }
+    SideEffect { if (openId != null) closingId = openId }
+    return (openId ?: closingId) to { closingId = null }
+}
+
 @Composable
 private fun HomeFolder(state: LauncherState, layout: HomeLayout?, content: HomeContent, app: LauncherApplication, drawerContent: DrawerContent) {
-    val id = state.openFolderId ?: return
+    val (id, onClosed) = rememberShownFolder(state.openFolderId)
+    if (id == null) return
     val folder = layout?.findFolder(id)
     if (folder == null) {
         // The folder disappeared (e.g. its last apps were removed).
-        if (layout != null) LaunchedEffect(Unit) { state.openFolderId = null }
+        if (layout != null) LaunchedEffect(Unit) { state.openFolderId = null; onClosed() }
         return
     }
     val apps = folder.apps.mapNotNull { item -> content.appsByRef[item.app]?.let { DragSource.FolderEntry(folder.id, item) to it } }
@@ -193,18 +231,21 @@ private fun HomeFolder(state: LauncherState, layout: HomeLayout?, content: HomeC
         apps = apps,
         pickerApps = drawerContent.searchable,
         content = content,
+        visible = state.openFolderId == folder.id,
         onRename = { title -> app.homeRepository.update { it.renameFolder(folder.id, title) } },
         onPicked = { refs -> app.homeRepository.update { it.setFolderApps(folder.id, refs) } },
         onDismiss = { state.openFolderId = null },
+        onClosed = onClosed,
     )
 }
 
 @Composable
 private fun DrawerFolder(state: LauncherState, layout: DrawerLayout, content: HomeContent, app: LauncherApplication, drawerContent: DrawerContent) {
-    val id = state.openDrawerFolderId ?: return
+    val (id, onClosed) = rememberShownFolder(state.openDrawerFolderId)
+    if (id == null) return
     val folder = layout.folder(id)
     if (folder == null) {
-        LaunchedEffect(Unit) { state.openDrawerFolderId = null }
+        LaunchedEffect(Unit) { state.openDrawerFolderId = null; onClosed() }
         return
     }
     val visible = drawerContent.searchable.associateBy { it.ref }
@@ -215,19 +256,17 @@ private fun DrawerFolder(state: LauncherState, layout: DrawerLayout, content: Ho
         apps = apps,
         pickerApps = drawerContent.searchable,
         content = content,
+        visible = state.openDrawerFolderId == folder.id,
         onRename = { title -> app.drawer.update { it.rename(folder.id, title) } },
         onPicked = { refs -> app.drawer.update { it.setApps(folder.id, refs) } },
         onDismiss = { state.openDrawerFolderId = null },
+        onClosed = onClosed,
     )
 }
 
 /** Applies a finished drag: drawer folder edits or home layout edits. */
 private fun applyDrop(app: LauncherApplication, source: DragSource, target: DropTarget) {
-    val ref = when (source) {
-        is DragSource.DrawerApp -> source.entry.ref
-        is DragSource.DrawerFolderApp -> source.entry.ref
-        else -> null
-    }
+    val ref = source.appRef
     when (target) {
         is DropTarget.DrawerOnApp -> if (ref != null) app.drawer.update { it.merge(ref, target.entry.ref) }
         is DropTarget.DrawerOnFolder -> if (ref != null) app.drawer.update { it.addToFolder(target.folderId, ref) }
@@ -237,18 +276,26 @@ private fun applyDrop(app: LauncherApplication, source: DragSource, target: Drop
             is DragSource.FolderEntry -> app.homeRepository.update { it.remove(source.item.id) }
             else -> Unit
         }
-        is DropTarget.Cell -> app.homeRepository.update { layout ->
-            when (source) {
-                is DragSource.DrawerApp, is DragSource.DrawerFolderApp -> {
-                    val (id, next) = layout.allocateId()
-                    next.drop(AppItem(id, ref!!), target.container, target.x, target.y) ?: layout
-                }
-                is DragSource.HomeEntry -> layout.move(source.item.id, target.container, target.x, target.y)
-                is DragSource.FolderEntry -> layout.move(source.item.id, target.container, target.x, target.y)
-                is DragSource.DrawerFolderEntry -> layout
-            }
-        }
+        is DropTarget.Cell -> app.homeRepository.update { it.withDrop(source, target) }
     }
+}
+
+private val DragSource.appRef: AppRef?
+    get() = when (this) {
+        is DragSource.DrawerApp -> entry.ref
+        is DragSource.DrawerFolderApp -> entry.ref
+        else -> null
+    }
+
+/** The home layout after dropping [source] onto [target]; also used to preview the drop. */
+private fun HomeLayout.withDrop(source: DragSource, target: DropTarget.Cell): HomeLayout = when (source) {
+    is DragSource.DrawerApp, is DragSource.DrawerFolderApp -> {
+        val (id, next) = allocateId()
+        next.drop(AppItem(id, source.appRef!!), target.container, target.x, target.y, merge = target.merge) ?: this
+    }
+    is DragSource.HomeEntry -> move(source.item.id, target.container, target.x, target.y, target.merge)
+    is DragSource.FolderEntry -> move(source.item.id, target.container, target.x, target.y, target.merge)
+    is DragSource.DrawerFolderEntry, is DragSource.NewWidget -> this
 }
 
 private fun HomeLayout.shortcutItems(): List<ShortcutItem> =
@@ -275,6 +322,16 @@ private fun DragOverlay(drag: DragState, content: HomeContent) {
             is DragSource.DrawerApp -> icon(source.entry)()
             is DragSource.DrawerFolderApp -> icon(source.entry)()
             is DragSource.DrawerFolderEntry -> FolderIcon(source.folder.apps.mapNotNull { content.appsByRef[it]?.icon }, iconModifier, drawerFolderBackground(content.darkTheme))
+            is DragSource.NewWidget -> Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.White.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
+                    .border(2.dp, Color.White, RoundedCornerShape(16.dp))
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                source.option.preview?.let { Image(it, contentDescription = null) }
+            }
             is DragSource.FolderEntry -> icon(content.appsByRef[source.item.app])()
             is DragSource.HomeEntry -> when (val item = source.item) {
                 is AppItem -> icon(content.appsByRef[item.app])()

@@ -25,7 +25,14 @@ class MainActivity : ComponentActivity() {
     private val app get() = application as LauncherApplication
 
     /** A widget being added: waiting for the bind permission and/or its configuration screen. */
-    private class PendingWidget(val appWidgetId: Int, val info: AppWidgetProviderInfo, val spanX: Int, val spanY: Int, val pageId: Long)
+    private class PendingWidget(
+        val appWidgetId: Int,
+        val info: AppWidgetProviderInfo,
+        val spanX: Int,
+        val spanY: Int,
+        val pageId: Long,
+        val cell: Pair<Int, Int>?,
+    )
 
     private var pendingWidget: PendingWidget? = null
 
@@ -81,10 +88,11 @@ class MainActivity : ComponentActivity() {
 
     // --- Adding widgets ---
 
-    private fun addWidget(option: WidgetOption, pageId: Long) {
+    /** [cell]: where the widget was dropped, or null to use the first free spot. */
+    private fun addWidget(option: WidgetOption, pageId: Long, cell: Pair<Int, Int>?) {
         val widgets = app.widgets
         val id = widgets.allocateId()
-        val pending = PendingWidget(id, option.info, option.spanX, option.spanY, pageId)
+        val pending = PendingWidget(id, option.info, option.spanX, option.spanY, pageId, cell)
         pendingWidget = pending
         if (widgets.bindIfAllowed(id, option.info)) {
             configureOrPlace(pending)
@@ -127,7 +135,7 @@ class MainActivity : ComponentActivity() {
         pendingWidget = null
         val serial = app.widgets.userSerial(pending.info)
         app.homeRepository.update {
-            it.addWidget(pending.appWidgetId, pending.info.provider.flattenToString(), serial, pending.spanX, pending.spanY, pending.pageId)
+            it.addWidget(pending.appWidgetId, pending.info.provider.flattenToString(), serial, pending.spanX, pending.spanY, pending.pageId, pending.cell)
         }
     }
 

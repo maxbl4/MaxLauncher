@@ -42,6 +42,7 @@
     <string name="widget_unavailable">Виджет недоступен</string>
 
     <string name="shortcut_added">Ярлык добавлен на главный экран</string>
+    <string name="widget_added">Виджет добавлен на главный экран</string>
 
     <string name="settings_title">Настройки</string>
     <string name="settings_home">Главный экран</string>

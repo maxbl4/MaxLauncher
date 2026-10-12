@@ -20,9 +20,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.floor
+import kotlin.math.roundToInt
 
 /** Which surface is on top and receives long presses. */
-enum class Layer { HOME, DRAWER, FOLDER }
+enum class Layer { HOME, DRAWER, FOLDER, WIDGET_PICKER }
 
 /** Something that can be long-pressed (menu) and dragged. */
 sealed interface DragSource {
@@ -48,6 +51,11 @@ sealed interface DragSource {
     data class FolderEntry(val folderId: Long, val item: AppItem) : DragSource {
         override val key = "folder:${item.id}"
     }
+
+    /** A widget from the widget picker, not on the home screen yet. */
+    data class NewWidget(val option: WidgetOption) : DragSource {
+        override val key = "newWidget:${option.info.provider.flattenToString()}#${option.info.profile.hashCode()}"
+    }
 }
 
 /** Sources that live in the app drawer; dragging them starts inside the drawer. */
@@ -55,7 +63,11 @@ val DragSource.isDrawerSource: Boolean
     get() = this is DragSource.DrawerApp || this is DragSource.DrawerFolderApp || this is DragSource.DrawerFolderEntry
 
 sealed interface DropTarget {
-    data class Cell(val container: Container, val x: Int, val y: Int) : DropTarget
+    /**
+     * A grid cell. [merge]: the finger is over the middle of an icon, so a dropped app makes a
+     * folder with it; otherwise icons are pushed aside. In the dock [x] is an index.
+     */
+    data class Cell(val container: Container, val x: Int, val y: Int, val merge: Boolean = false) : DropTarget
     data object Remove : DropTarget
 
     // Inside the app drawer.
@@ -66,7 +78,14 @@ sealed interface DropTarget {
 
 data class MenuRequest(val source: DragSource, val bounds: Rect)
 
-data class DragState(val source: DragSource, val position: Offset, val grabOffset: Offset, val size: Size)
+/** [widgetSpans]: cells the dragged widget takes (null for icons). */
+data class DragState(
+    val source: DragSource,
+    val position: Offset,
+    val grabOffset: Offset,
+    val size: Size,
+    val widgetSpans: Pair<Int, Int>? = null,
+)
 
 data class PageDrag(val pageId: Long, val position: Offset)
 
@@ -127,6 +146,7 @@ class LauncherState(private val scope: CoroutineScope) {
 
     val activeLayer: Layer
         get() = when {
+            widgetPickerOpen -> Layer.WIDGET_PICKER
             openFolderId != null || openDrawerFolderId != null -> Layer.FOLDER
             drawer.isVisible -> Layer.DRAWER
             else -> Layer.HOME
@@ -209,7 +229,8 @@ class LauncherState(private val scope: CoroutineScope) {
             return DropTarget.Remove
         }
         // Widgets are placed by their top-left corner, icons by the finger.
-        val point = if ((source as? DragSource.HomeEntry)?.item is WidgetItem) {
+        val isWidget = source.isWidget
+        val point = if (isWidget) {
             val cell = homeCellSize() ?: Size.Zero
             position - drag.grabOffset + Offset(cell.width / 2, cell.height / 2)
         } else {
@@ -218,26 +239,60 @@ class LauncherState(private val scope: CoroutineScope) {
         val area = grids.values.firstOrNull { it.bounds.contains(point) } ?: return null
         val cellWidth = area.bounds.width / area.columns
         val cellHeight = area.bounds.height / area.rows
-        val x = ((point.x - area.bounds.left) / cellWidth).toInt().coerceIn(0, area.columns - 1)
-        val y = ((point.y - area.bounds.top) / cellHeight).toInt().coerceIn(0, area.rows - 1)
-        return DropTarget.Cell(area.container, x, y)
+        val fx = (point.x - area.bounds.left) / cellWidth
+        val fy = (point.y - area.bounds.top) / cellHeight
+        val inMiddleX = abs(fx - floor(fx) - 0.5f) < MERGE_ZONE
+        val inMiddleY = abs(fy - floor(fy) - 0.5f) < MERGE_ZONE
+        if (area.container == Container.Dock) {
+            if (isWidget) return null
+            // A row of icons: over the middle of one merges with it, elsewhere inserts between.
+            return if (inMiddleX && fx.toInt() < area.columns) {
+                DropTarget.Cell(Container.Dock, fx.toInt(), 0, merge = true)
+            } else {
+                DropTarget.Cell(Container.Dock, fx.roundToInt().coerceIn(0, area.columns), 0)
+            }
+        }
+        val x = fx.toInt().coerceIn(0, area.columns - 1)
+        val y = fy.toInt().coerceIn(0, area.rows - 1)
+        return DropTarget.Cell(area.container, x, y, merge = !isWidget && inMiddleX && inMiddleY)
     }
+
+    private val DragSource.isWidget: Boolean
+        get() = this is DragSource.NewWidget || (this as? DragSource.HomeEntry)?.item is WidgetItem
 
     // --- Long press, drag and drop ---
 
     fun showMenu(source: DragSource, bounds: Rect) {
-        menu = MenuRequest(source, bounds)
+        // Widgets in the picker have no menu; a long press only starts dragging them.
+        if (source !is DragSource.NewWidget) menu = MenuRequest(source, bounds)
     }
 
     fun startDrag(source: DragSource, position: Offset, bounds: Rect) {
         menu = null
         dragInDrawer = source.isDrawerSource
-        when (source) {
-            is DragSource.DrawerFolderApp -> openDrawerFolderId = null
-            is DragSource.FolderEntry -> openFolderId = null
-            else -> Unit
+        val state = when (source) {
+            is DragSource.NewWidget -> {
+                // Leave the picker and carry a widget-sized frame, held by its middle.
+                widgetPickerOpen = false
+                editMode = false
+                val cell = homeCellSize() ?: Size(bounds.width / 2, bounds.height / 2)
+                val size = Size(cell.width * source.option.spanX, cell.height * source.option.spanY)
+                DragState(source, position, Offset(size.width / 2, size.height / 2), size, source.option.spanX to source.option.spanY)
+            }
+            else -> {
+                when (source) {
+                    is DragSource.DrawerFolderApp -> openDrawerFolderId = null
+                    is DragSource.FolderEntry -> openFolderId = null
+                    else -> Unit
+                }
+                val spans = if (source.isWidget) {
+                    homeCellSize()?.let { cell -> (bounds.width / cell.width).roundToInt().coerceAtLeast(1) to (bounds.height / cell.height).roundToInt().coerceAtLeast(1) }
+                } else {
+                    null
+                }
+                DragState(source, position, position - bounds.topLeft, bounds.size, spans)
+            }
         }
-        val state = DragState(source, position, position - bounds.topLeft, bounds.size)
         drag = state
         hover = dropTargetAt(position, state)
     }
@@ -308,6 +363,8 @@ class LauncherState(private val scope: CoroutineScope) {
 
     fun isDragged(source: DragSource): Boolean = drag?.source?.key == source.key
 
+    val draggedWidgetSpans: Pair<Int, Int>? get() = drag?.widgetSpans
+
     // --- Page reordering (edit mode) ---
 
     fun startPageDrag(pageId: Long, position: Offset) {
@@ -356,6 +413,8 @@ class LauncherState(private val scope: CoroutineScope) {
         const val EDGE_FRACTION = 0.06f
         const val EDGE_DELAY_MS = 450L
         const val EDGE_REPEAT_MS = 900L
+        /** Half-size of the middle part of a cell (as a fraction) where a dropped app makes a folder. */
+        const val MERGE_ZONE = 0.25f
     }
 }
 

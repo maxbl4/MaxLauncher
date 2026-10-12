@@ -42,14 +42,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
-import kotlinx.coroutines.launch
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,9 +87,11 @@ fun FolderPanel(
     apps: List<Pair<DragSource, AppEntry>>,
     pickerApps: List<AppEntry>,
     content: HomeContent,
+    visible: Boolean,
     onRename: (String) -> Unit,
     onPicked: (List<AppRef>) -> Unit,
     onDismiss: () -> Unit,
+    onClosed: () -> Unit,
 ) {
     val state = content.state
     val dark = content.darkTheme
@@ -105,18 +105,18 @@ fun FolderPanel(
     // The card grows out of the tapped folder icon and shrinks back into it when closed.
     val origin = remember(folderId) { state.folderOrigin }
     val progress = remember(folderId) { Animatable(0f) }
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(folderId) {
-        progress.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow))
-    }
-    val close: () -> Unit = {
-        focusManager.clearFocus()
-        scope.launch {
+    // Closing (tap outside, Back, Home, dragging an app out) clears the open folder; the panel
+    // stays until it has shrunk back, then reports [onClosed].
+    LaunchedEffect(folderId, visible) {
+        if (visible) {
+            progress.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow))
+        } else {
+            focusManager.clearFocus()
             progress.animateTo(0f, tween(durationMillis = 180))
-            onDismiss()
+            onClosed()
         }
     }
-    BackHandler(enabled = !pickerOpen, onBack = close)
+    val close: () -> Unit = onDismiss
     var cardBounds by remember { mutableStateOf(Rect.Zero) }
 
     Box(
