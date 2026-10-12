@@ -1,10 +1,16 @@
 package com.maxbl4.maxlauncher.ui
 
+import android.content.Intent
+import android.speech.RecognizerIntent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -30,6 +36,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -46,6 +54,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -53,15 +63,19 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import com.maxbl4.maxlauncher.R
+import com.maxbl4.maxlauncher.SettingsActivity
 import com.maxbl4.maxlauncher.apps.AppEntry
 import com.maxbl4.maxlauncher.apps.AppSearch
 import com.maxbl4.maxlauncher.drawer.DrawerEntry
@@ -91,7 +105,13 @@ fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modi
     val state = content.state
     val drawer = state.drawer
     val dark = isSystemInDarkTheme()
-    val scrim = if (dark) Color(0xFF101010).copy(alpha = 0.7f) else Color(0xFFF2F2F2).copy(alpha = 0.82f)
+    // Dark: the wallpaper stays visible under a light gradient, as on One UI (black from 8% at
+    // the top to 20% at the bottom).
+    val scrim = if (dark) {
+        Brush.verticalGradient(listOf(Color(0x14000000), Color(0x33000000)))
+    } else {
+        SolidColor(Color(0xFFF2F2F2).copy(alpha = 0.82f))
+    }
     val contentColor = if (dark) Color(0xFFF2F2F2) else Color(0xFF1A1A1A)
     val labels = LabelStyle(contentColor, shadow = false)
     val enterOffsetPx = with(LocalDensity.current) { 96.dp.toPx() }
@@ -141,9 +161,7 @@ fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modi
                 .imePadding()
                 .padding(horizontal = 8.dp),
         ) {
-            if (drawerContent.hasWorkProfile) {
-                Tabs(workTab, onSelect = { workTab = it; query = "" }, contentColor)
-            }
+            TopBar(drawerContent.hasWorkProfile, workTab, onSelect = { workTab = it; query = "" }, contentColor)
             when {
                 searching -> SearchResults(results, content, labels, Modifier.weight(1f))
                 workTab && drawerContent.workPaused -> WorkPaused(drawerContent.onUnpauseWork, contentColor, Modifier.weight(1f))
@@ -154,14 +172,14 @@ fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modi
             val dragSource = state.drag?.source
             val showToHome = state.dragInDrawer && !state.layoutLocked && dragSource != null &&
                 dragSource !is DragSource.DrawerFolderEntry
-            Box(Modifier.padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 12.dp)) {
+            Box(Modifier.padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 10.dp)) {
                 if (showToHome) {
                     ToHomeZone(state, Modifier.fillMaxWidth())
                 } else {
-                    SearchField(
+                    DrawerSearchBar(
                         query = query,
                         onQueryChange = { query = it },
-                        contentColor = contentColor,
+                        dark = dark,
                         onGo = { results.firstOrNull()?.let { content.actions.launch(it, null) } },
                     )
                 }
@@ -170,27 +188,133 @@ fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modi
     }
 }
 
+/** As One UI: wide Personal / Work tabs on the left (with a work profile) and a menu on the right. */
 @Composable
-private fun Tabs(workTab: Boolean, onSelect: (Boolean) -> Unit, color: Color) {
+private fun TopBar(hasWorkProfile: Boolean, workTab: Boolean, onSelect: (Boolean) -> Unit, color: Color) {
+    val context = LocalContext.current
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().height(48.dp).padding(start = 12.dp),
     ) {
-        listOf(false to R.string.tab_personal, true to R.string.tab_work).forEach { (work, label) ->
-            val selected = work == workTab
-            Text(
-                text = stringResource(label),
-                color = color.copy(alpha = if (selected) 1f else 0.6f),
-                fontSize = 15.sp,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(if (selected) color.copy(alpha = 0.12f) else Color.Transparent)
-                    .clickable { onSelect(work) }
-                    .padding(horizontal = 20.dp, vertical = 8.dp),
-            )
+        if (hasWorkProfile) {
+            listOf(false to R.string.tab_personal, true to R.string.tab_work).forEach { (work, label) ->
+                val selected = work == workTab
+                Box(
+                    Modifier
+                        .width(145.dp)
+                        .height(40.dp)
+                        .clip(CircleShape)
+                        .background(if (selected) color.copy(alpha = 0.15f) else Color.Transparent)
+                        .clickable { onSelect(work) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = stringResource(label),
+                        color = color.copy(alpha = if (selected) 1f else 0.6f),
+                        fontSize = 17.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Box {
+            Box(
+                Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .clickable { menuOpen = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(painterResource(R.drawable.ic_more_vert), contentDescription = stringResource(R.string.drawer_more), tint = color)
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.edit_settings)) },
+                    onClick = {
+                        menuOpen = false
+                        context.startActivity(Intent(context, SettingsActivity::class.java))
+                    },
+                )
+            }
         }
     }
 }
+
+/** One UI's search: a short pill with a microphone at the bottom, as wide as the screen while in use. */
+@Composable
+private fun DrawerSearchBar(query: String, onQueryChange: (String) -> Unit, dark: Boolean, onGo: () -> Unit) {
+    val context = LocalContext.current
+    var focused by remember { mutableStateOf(false) }
+    val expanded by animateFloatAsState(if (focused || query.isNotEmpty()) 1f else 0f, label = "search width")
+    val background = if (dark) Color(0xFF3C3D3B) else Color(0xFFE4E4E4)
+    val color = if (dark) Color(0xFFF2F2F2) else Color(0xFF1A1A1A)
+    val voiceIntent = remember {
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+    }
+    val canSpeak = remember { voiceIntent.resolveActivity(context.packageManager) != null }
+    val voice = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let(onQueryChange)
+    }
+    BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        BasicTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            singleLine = true,
+            textStyle = TextStyle(color = color, fontSize = 17.sp),
+            cursorBrush = SolidColor(color),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+            keyboardActions = KeyboardActions(onGo = { onGo() }),
+            modifier = Modifier
+                .width(lerp(SEARCH_SHORT_WIDTH.coerceAtMost(maxWidth), maxWidth, expanded))
+                .onFocusChanged { focused = it.isFocused },
+            decorationBox = { innerTextField ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .clip(CircleShape)
+                        .background(background)
+                        .padding(start = 18.dp, end = 6.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_search),
+                        contentDescription = null,
+                        tint = color.copy(alpha = 0.7f),
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Box(Modifier.weight(1f)) {
+                        if (query.isEmpty()) {
+                            Text(stringResource(R.string.search_hint), color = color.copy(alpha = 0.6f), fontSize = 17.sp, maxLines = 1)
+                        }
+                        innerTextField()
+                    }
+                    val button = Modifier.size(40.dp).clip(CircleShape)
+                    when {
+                        query.isNotEmpty() -> Box(button.clickable { onQueryChange("") }, contentAlignment = Alignment.Center) {
+                            Text("✕", color = color.copy(alpha = 0.7f), fontSize = 17.sp)
+                        }
+                        canSpeak -> Box(button.clickable { voice.launch(voiceIntent) }, contentAlignment = Alignment.Center) {
+                            Icon(
+                                painterResource(R.drawable.ic_mic),
+                                contentDescription = stringResource(R.string.search_voice),
+                                tint = color.copy(alpha = 0.8f),
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                    }
+                }
+            },
+        )
+    }
+}
+
+/** Width of the idle search pill (One UI). */
+private val SEARCH_SHORT_WIDTH = 244.dp
 
 @Composable
 private fun WorkPaused(onUnpause: () -> Unit, color: Color, modifier: Modifier) {

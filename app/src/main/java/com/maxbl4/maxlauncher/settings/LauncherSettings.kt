@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class LauncherSettings(
-    val drawerColumns: Int = 5,
+    val drawerColumns: Int = 4,
     val drawerRows: Int = 6,
     /** Home items cannot be moved or removed (docs/FEATURES.md, item 9). */
     val lockLayout: Boolean = false,

@@ -19,6 +19,10 @@
         <intent>
             <action android:name="android.media.action.STILL_IMAGE_CAMERA" />
         </intent>
+        <!-- Voice input for the drawer search. -->
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
     </queries>
 
     <application

@@ -2,10 +2,12 @@
 <resources>
     <string name="app_name">MaxLauncher</string>
     <string name="search_hint">Поиск</string>
+    <string name="search_voice">Голосовой поиск</string>
+    <string name="drawer_more">Ещё</string>
     <string name="search_nothing_found">Ничего не найдено</string>
 
-    <string name="tab_personal">Личные</string>
-    <string name="tab_work">Рабочие</string>
+    <string name="tab_personal">Личное</string>
+    <string name="tab_work">Рабочий</string>
     <string name="work_paused">Рабочие приложения приостановлены</string>
     <string name="work_unpause">Включить</string>
 
