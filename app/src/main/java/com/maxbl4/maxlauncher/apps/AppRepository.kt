@@ -22,6 +22,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import com.maxbl4.maxlauncher.home.AppRef
 import com.maxbl4.maxlauncher.home.ShortcutItem
+import com.maxbl4.maxlauncher.home.ShortcutTarget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -222,6 +223,25 @@ class AppRepository(private val context: Context) {
             }
         }
         result
+    }
+
+    /**
+     * Static and dynamic shortcuts of all personal apps, with their short and long labels; used
+     * to recognise shortcut icons when importing a layout. Empty unless we are the default launcher.
+     */
+    suspend fun allShortcuts(): List<Pair<Set<String>, ShortcutTarget>> = withContext(Dispatchers.IO) {
+        if (!launcherApps.hasShortcutHostPermission()) return@withContext emptyList()
+        val flags = LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST or LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC
+        val serial = userManager.getSerialNumberForUser(myUser)
+        apps.value.filter { !it.isWork }.map { it.key.packageName }.distinct().flatMap { pkg ->
+            val query = LauncherApps.ShortcutQuery().setPackage(pkg).setQueryFlags(flags)
+            runCatching { launcherApps.getShortcuts(query, myUser) }.getOrNull().orEmpty()
+                .filter { it.isEnabled }
+                .map { info ->
+                    val labels = setOfNotNull(info.shortLabel?.toString()?.trim(), info.longLabel?.toString()?.trim())
+                    labels to ShortcutTarget(pkg, info.id, serial, info.shortLabel?.toString() ?: labels.firstOrNull().orEmpty())
+                }
+        }
     }
 
     /** Tells the system which shortcuts of a package are still pinned on the home screen. */

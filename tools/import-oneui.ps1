@@ -5,8 +5,8 @@
 .DESCRIPTION
     One UI Home does not share its layout with other apps, so this script reads it from the
     screen over adb: it opens One UI Home, goes through every page (tapping the page indicator),
-    opens every folder, reads the dock, and builds a layout file. Then it opens MaxLauncher's
-    import screen, where nothing changes until you confirm.
+    opens every folder, reads the dock and the folders of the apps screen, and builds a layout
+    file. Then it opens MaxLauncher's import screen, where nothing changes until you confirm.
 
     Do not touch the phone while the script runs (a minute or two). The phone must be unlocked.
 
@@ -189,12 +189,77 @@ if ($hotseat) {
 }
 Write-Host "Dock: $($dock.Count) icons"
 
+# --- Apps screen folders ---
+# The apps screen is either a vertical list or horizontal pages; folders are read in both.
+Write-Host 'Reading apps screen folders...' -ForegroundColor Cyan
+Adb shell input swipe 540 1600 540 500 300 | Out-Null
+Start-Sleep -Milliseconds 1500
+$drawerFolders = [System.Collections.Generic.List[object]]::new()
+$seenFolders = [System.Collections.Generic.HashSet[string]]::new()
+
+function Read-VisibleFolders($container, $area) {
+    foreach ($f in @($container.SelectNodes(".//node[@resource-id='$(Id 'folder_icon_container')']"))) {
+        $b = Get-Bounds $f
+        # Only folders shown whole: partly hidden ones are read after the next scroll.
+        if ($b.T -lt $area.T -or $b.B -gt $area.B -or ($b.B - $b.T) -lt 200) { continue }
+        if (-not $seenFolders.Add($f.'content-desc')) { continue }
+        $folder = Read-Folder $f
+        $drawerFolders.Add([ordered]@{ title = $folder.Title; apps = $folder.Apps })
+        Write-Host "  folder '$($folder.Title)': $($folder.Apps.Count) apps"
+    }
+}
+
+function Get-AppsList($doc) { $doc.SelectSingleNode("//node[@resource-id='$(Id 'vertical_applist_recycler_view')']") }
+
+$doc = Read-Screen
+$list = Get-AppsList $doc
+if ($list) {
+    $area = Get-Bounds $list
+    # Scroll to the top. A swipe down at the top closes the apps screen: then reopen it, it is at the top.
+    for ($k = 0; $k -lt 15; $k++) {
+        Adb shell input swipe 540 900 540 1700 250 | Out-Null
+        Start-Sleep -Milliseconds 500
+        if (-not (Get-AppsList (Read-Screen))) {
+            Adb shell input swipe 540 1600 540 500 300 | Out-Null
+            Start-Sleep -Milliseconds 1500
+            break
+        }
+    }
+    $previous = ''
+    for ($step = 0; $step -lt 40; $step++) {
+        $doc = Read-Screen
+        $list = Get-AppsList $doc
+        if (-not $list) { throw 'The apps screen closed while reading its folders; run the script again.' }
+        Read-VisibleFolders $list $area
+        $visible = (@($list.SelectNodes(".//node[@resource-id='$(Id 'icon_container')' or @resource-id='$(Id 'folder_icon_container')']")) |
+            ForEach-Object { $_.'content-desc' }) -join '|'
+        if ($visible -eq $previous) { break }   # the end of the list
+        $previous = $visible
+        Adb shell input swipe 540 1900 540 800 700 | Out-Null   # slow drag, no fling
+        Start-Sleep -Milliseconds 700
+    }
+} else {
+    $appsDots = @($doc.SelectNodes('//node[@content-desc]') | Where-Object { $_.'content-desc' -match '^(?:Страница|Page)\s+\d+' }) |
+        Sort-Object { (Get-Bounds $_).L }
+    $area = [pscustomobject]@{ T = 0; B = 2400 }
+    $appsRoot = "//node[@resource-id='$(Id 'apps_screen')']"
+    if ($appsDots.Count -le 1) { $root = $doc.SelectSingleNode($appsRoot); if ($root) { Read-VisibleFolders $root $area } }
+    foreach ($dot in $appsDots) {
+        Tap (Get-Bounds $dot)
+        Start-Sleep -Milliseconds 1000
+        $root = (Read-Screen).SelectSingleNode($appsRoot)
+        if ($root) { Read-VisibleFolders $root $area }
+    }
+}
+Write-Host "Apps screen folders: $($drawerFolders.Count)"
+
 $layout = [ordered]@{
-    columns  = [int][Math]::Round(($grid.R - $grid.L) / $cell.W)
-    rows     = [int][Math]::Round(($grid.B - $grid.T) / $cell.H)
-    homePage = $homePage
-    pages    = $pages
-    dock     = $dock
+    columns       = [int][Math]::Round(($grid.R - $grid.L) / $cell.W)
+    rows          = [int][Math]::Round(($grid.B - $grid.T) / $cell.H)
+    homePage      = $homePage
+    pages         = $pages
+    dock          = $dock
+    drawerFolders = $drawerFolders
 }
 $json = $layout | ConvertTo-Json -Depth 8 -Compress
 $jsonFile = Join-Path $PSScriptRoot 'oneui-layout.json'

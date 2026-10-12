@@ -1,5 +1,7 @@
 package com.maxbl4.maxlauncher.home
 
+import com.maxbl4.maxlauncher.drawer.DrawerFolder
+import com.maxbl4.maxlauncher.drawer.DrawerLayout
 import kotlinx.serialization.Serializable
 
 /*
@@ -16,7 +18,15 @@ data class ImportedLayout(
     val pages: List<ImportedPage>,
     /** Dock icons from left to right (apps or folders; x and y are ignored). */
     val dock: List<ImportedItem> = emptyList(),
+    /** Folders of the apps screen. */
+    val drawerFolders: List<ImportedFolder> = emptyList(),
 )
+
+@Serializable
+data class ImportedFolder(val title: String, val apps: List<String>)
+
+/** A shortcut found for an icon whose label matched no app. */
+data class ShortcutTarget(val packageName: String, val shortcutId: String, val userSerial: Long, val label: String)
 
 @Serializable
 data class ImportedPage(val items: List<ImportedItem> = emptyList())
@@ -45,23 +55,47 @@ data class ImportResult(
     val missing: List<String>,
 )
 
-/** All app labels the layout refers to (icons, folder content, dock), without duplicates. */
+/** All app labels the layout refers to (icons, folder content, dock, apps screen folders), without duplicates. */
 fun ImportedLayout.appLabels(): List<String> =
-    (pages.flatMap { it.items } + dock)
+    ((pages.flatMap { it.items } + dock)
         .flatMap { item ->
             when (item.type) {
                 "app" -> listOf(item.label)
                 "folder" -> item.apps
                 else -> emptyList()
             }
-        }
+        } + drawerFolders.flatMap { it.apps })
         .distinct()
+
+/** Labels of standalone icons (home pages and dock): these may also be shortcuts. */
+fun ImportedLayout.iconLabels(): List<String> =
+    (pages.flatMap { it.items } + dock).filter { it.type == "app" }.map { it.label }.distinct()
+
+/**
+ * Apps screen folders. Apps that are not installed are left out; an app can be in one drawer
+ * folder only (the first folder listing it keeps it); folders need at least two apps.
+ */
+fun ImportedLayout.toDrawerLayout(resolve: (String) -> AppRef?): DrawerLayout {
+    val seen = HashSet<AppRef>()
+    var nextId = 1L
+    val folders = drawerFolders.mapNotNull { folder ->
+        val apps = folder.apps.mapNotNull(resolve).distinct().filter { it !in seen }
+        if (apps.size < 2) return@mapNotNull null
+        seen += apps
+        DrawerFolder(nextId++, folder.title.trim(), apps)
+    }
+    return DrawerLayout(folders, nextId)
+}
 
 /**
  * Builds a home layout. [resolve] maps an app label to the chosen installed app, or null when
- * there is none. Folders that end up with a single app become that app; empty ones are dropped.
+ * there is none; standalone icons that are not apps are then looked up with [resolveShortcut].
+ * Folders that end up with a single app become that app; empty ones are dropped.
  */
-fun ImportedLayout.toHomeLayout(resolve: (String) -> AppRef?): ImportResult {
+fun ImportedLayout.toHomeLayout(
+    resolve: (String) -> AppRef?,
+    resolveShortcut: (String) -> ShortcutTarget? = { null },
+): ImportResult {
     val columns = columns.coerceIn(3, 7)
     val rows = rows.coerceIn(3, 8)
     var layout = HomeLayout(
@@ -82,8 +116,19 @@ fun ImportedLayout.toHomeLayout(resolve: (String) -> AppRef?): ImportResult {
         return AppItem(id, ref)
     }
 
+    fun shortcutOrApp(label: String): HomeItem? {
+        if (resolve(label) == null) {
+            resolveShortcut(label)?.let { s ->
+                val (id, next) = layout.allocateId()
+                layout = next
+                return ShortcutItem(id, s.packageName, s.shortcutId, s.userSerial, s.label)
+            }
+        }
+        return app(label)
+    }
+
     fun item(imported: ImportedItem): HomeItem? = when (imported.type) {
-        "app" -> app(imported.label)
+        "app" -> shortcutOrApp(imported.label)
         "folder" -> {
             val apps = imported.apps.mapNotNull(::app)
             when (apps.size) {

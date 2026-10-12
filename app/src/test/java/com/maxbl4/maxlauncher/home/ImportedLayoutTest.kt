@@ -76,6 +76,37 @@ class ImportedLayoutTest {
     }
 
     @Test
+    fun iconsThatAreNotAppsBecomeShortcutsWhenFound() {
+        val layout = ImportedLayout(
+            columns = 4, rows = 6,
+            pages = listOf(ImportedPage(listOf(ImportedItem("app", "Быстрый звонок"), ImportedItem("app", "Неизвестно", 1, 0)))),
+        )
+        val result = layout.toHomeLayout(::resolve) { label ->
+            if (label == "Быстрый звонок") ShortcutTarget("pkg.contacts", "call:1", 0, label) else null
+        }
+        val page = Container.Page(result.layout.pages.single().id)
+        assertEquals(ShortcutItem((result.layout.itemAt(page, 0, 0)!!.item).id, "pkg.contacts", "call:1", 0, "Быстрый звонок"), result.layout.itemAt(page, 0, 0)!!.item)
+        assertEquals(listOf("Неизвестно"), result.missing)
+    }
+
+    @Test
+    fun drawerFoldersKeepInstalledAppsOnce() {
+        val layout = ImportedLayout(
+            columns = 4, rows = 6, pages = emptyList(),
+            drawerFolders = listOf(
+                ImportedFolder("Банки", listOf("СберБанк", "ВТБ", "Raiffeisen")),
+                ImportedFolder("Ещё", listOf("ВТБ", "Gmail")), // ВТБ is taken: one app left, no folder
+                ImportedFolder("Почта", listOf("Gmail", "Chrome")),
+            ),
+        )
+        val drawer = layout.toDrawerLayout(::resolve)
+        assertEquals(listOf("Банки", "Почта"), drawer.folders.map { it.title })
+        assertEquals(listOf(resolve("СберБанк"), resolve("ВТБ")), drawer.folders[0].apps)
+        assertTrue(drawer.folders.map { it.id }.all { it < drawer.nextId })
+        assertTrue("Raiffeisen" !in layout.iconLabels() && "СберБанк" in layout.appLabels())
+    }
+
+    @Test
     fun parsesScriptJson() {
         val json = """{"columns":4,"rows":6,"homePage":0,"pages":[{"items":[{"type":"app","label":"Gmail","x":1,"y":2}]}],"dock":[]}"""
         val parsed = Json { ignoreUnknownKeys = true }.decodeFromString<ImportedLayout>(json)

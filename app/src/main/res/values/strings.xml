@@ -49,13 +49,19 @@
     <string name="import_summary">Страниц: %1$d, значков: %2$d, папок: %3$d, виджетов: %4$d</string>
     <string name="import_ambiguous">Одинаковые названия — выберите приложение</string>
     <string name="import_missing">Не установлены (будут пропущены)</string>
-    <string name="import_warning">Текущая раскладка главного экрана будет заменена. Копия сохранится в памяти лаунчера.</string>
+    <string name="import_warning">Текущая раскладка главного экрана и папки меню приложений будут заменены. Копия сохранится в памяти лаунчера. Виджеты добавляются после импорта; у некоторых откроется их настройка.</string>
     <string name="import_confirm">Импортировать</string>
     <string name="import_to_home">На главный экран</string>
     <string name="import_done">Готово: страниц %1$d, элементов %2$d.</string>
     <string name="import_report_missing">Пропущены (не установлены): %1$s</string>
-    <string name="import_report_widgets">Виджеты не добавлены, добавьте вручную: %1$s</string>
-    <string name="import_report_backup">Прежняя раскладка сохранена.</string>
+    <string name="import_report_backup">Прежняя раскладка и папки меню сохранены.</string>
+    <string name="import_summary_drawer">Папок в меню приложений: %1$d</string>
+    <string name="import_shortcuts">Найдены как ярлыки приложений</string>
+    <string name="import_report_drawer">Папок в меню приложений: %1$d.</string>
+    <string name="import_widget_not_found">Виджет «%1$s» не найден — добавьте вручную.</string>
+    <string name="import_widget_not_allowed">Виджет «%1$s»: нет разрешения на создание.</string>
+    <string name="import_widget_setup_failed">Виджет «%1$s»: не открылась настройка — добавьте вручную.</string>
+    <string name="import_widget_setup_cancelled">Виджет «%1$s»: настройка отменена.</string>
 
     <string name="settings_title">Настройки</string>
     <string name="settings_home">Главный экран</string>
