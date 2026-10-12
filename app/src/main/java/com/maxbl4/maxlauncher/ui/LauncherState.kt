@@ -4,6 +4,7 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -107,6 +108,10 @@ class LauncherState(private val scope: CoroutineScope) {
 
     /** Centre of the folder icon that was tapped; the open folder grows out of it. */
     var folderOrigin: Offset? = null
+
+    /** How far the open home / drawer folder is shown (0..1); what is underneath fades out meanwhile, as in One UI. */
+    var homeFolderProgress by mutableFloatStateOf(0f)
+    var drawerFolderProgress by mutableFloatStateOf(0f)
     var resizingWidgetId by mutableStateOf<Long?>(null)
     var widgetPickerOpen by mutableStateOf(false)
     var menu by mutableStateOf<MenuRequest?>(null)

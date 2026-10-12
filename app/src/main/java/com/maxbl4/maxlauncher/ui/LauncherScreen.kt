@@ -169,7 +169,7 @@ fun LauncherScreen(
                 content = content,
                 modifier = Modifier.graphicsLayer {
                     val p = state.drawer.progress.value
-                    alpha = 1f - p
+                    alpha = (1f - p) * (1f - state.homeFolderProgress)
                     scaleX = 1f - HOME_SHRINK * p
                     scaleY = 1f - HOME_SHRINK * p
                 },
@@ -236,6 +236,7 @@ private fun HomeFolder(state: LauncherState, layout: HomeLayout?, content: HomeC
         onPicked = { refs -> app.homeRepository.update { it.setFolderApps(folder.id, refs) } },
         onDismiss = { state.openFolderId = null },
         onClosed = onClosed,
+        onProgress = { state.homeFolderProgress = it },
     )
 }
 
@@ -261,6 +262,7 @@ private fun DrawerFolder(state: LauncherState, layout: DrawerLayout, content: Ho
         onPicked = { refs -> app.drawer.update { it.setApps(folder.id, refs) } },
         onDismiss = { state.openDrawerFolderId = null },
         onClosed = onClosed,
+        onProgress = { state.drawerFolderProgress = it },
     )
 }
 

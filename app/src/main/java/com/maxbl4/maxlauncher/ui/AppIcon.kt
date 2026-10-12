@@ -1,5 +1,7 @@
 package com.maxbl4.maxlauncher.ui
 
+import android.graphics.drawable.AdaptiveIconDrawable
+import android.graphics.drawable.ColorDrawable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,15 +25,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
@@ -39,6 +47,18 @@ import com.maxbl4.maxlauncher.apps.AppEntry
 
 /** Matches One UI Home icons on a 4-column grid. */
 val ICON_SIZE = 63.dp
+
+/** The system icon shape (a squircle on One UI), so folders look like the app icons next to them. */
+val IconShape: Shape = object : Shape {
+    // config_icon_mask in a 100×100 viewport (the drawable has no bounds).
+    private val mask = AdaptiveIconDrawable(ColorDrawable(), ColorDrawable()).iconMask
+
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+        val path = android.graphics.Path(mask)
+        path.transform(android.graphics.Matrix().apply { setScale(size.width / 100f, size.height / 100f) })
+        return Outline.Generic(path.asComposePath())
+    }
+}
 
 /** How icon labels look: dark text on light wallpapers / the light drawer, white with a shadow otherwise. */
 data class LabelStyle(val color: Color, val shadow: Boolean)
@@ -93,7 +113,7 @@ fun AppIcon(entry: AppEntry, actions: AppActions, labelStyle: LabelStyle, modifi
     }
 }
 
-/** Folder icon: a translucent rounded square with previews of the first apps (2×2, or 3×3 for more than four). */
+/** Folder icon: a translucent [IconShape] with previews of the first apps (2×2, or 3×3 for more than four). */
 @Composable
 fun FolderIcon(apps: List<ImageBitmap>, modifier: Modifier = Modifier, background: Color = HOME_FOLDER_LIGHT) {
     val grid = if (apps.size <= 4) 2 else 3
@@ -104,7 +124,7 @@ fun FolderIcon(apps: List<ImageBitmap>, modifier: Modifier = Modifier, backgroun
     val cellSize = (ICON_SIZE - padding * 2 - gap * (grid - 1)) / grid
     Box(
         modifier
-            .clip(RoundedCornerShape(30))
+            .clip(IconShape)
             .background(background)
             .padding(padding),
         contentAlignment = Alignment.Center,
@@ -133,9 +153,9 @@ fun Modifier.registerSource(state: LauncherState, layer: Layer, source: DragSour
 
 private val LABEL_SHADOW = Shadow(color = Color(0x99000000), offset = Offset(0f, 1.5f), blurRadius = 4f)
 
-/** Folder backgrounds: translucent over the wallpaper, tinted over the plain drawer. */
+/** Folder backgrounds: translucent over the wallpaper (dark: black at 59%, as One UI), tinted over the plain drawer. */
 val HOME_FOLDER_LIGHT = Color(0x99F2F2F2)
-val HOME_FOLDER_DARK = Color(0x66303030)
+val HOME_FOLDER_DARK = Color(0x96000000)
 val DRAWER_FOLDER_LIGHT = Color(0x1F000000)
 val DRAWER_FOLDER_DARK = Color(0x29FFFFFF)
 

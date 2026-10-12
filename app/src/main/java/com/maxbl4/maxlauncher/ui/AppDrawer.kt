@@ -131,7 +131,7 @@ fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modi
                 .fillMaxSize()
                 .graphicsLayer {
                     val p = drawer.progress.value
-                    alpha = p
+                    alpha = p * (1f - state.drawerFolderProgress)
                     translationY = drawer.enterDirection * (1f - p) * enterOffsetPx
                 }
                 .windowInsetsPadding(WindowInsets.systemBars)

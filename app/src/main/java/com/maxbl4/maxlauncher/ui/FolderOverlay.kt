@@ -40,6 +40,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.draw.drawBehind
@@ -53,6 +54,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -92,12 +94,16 @@ fun FolderPanel(
     onPicked: (List<AppRef>) -> Unit,
     onDismiss: () -> Unit,
     onClosed: () -> Unit,
+    /** How far the folder is shown, every frame (0 once it is gone). */
+    onProgress: (Float) -> Unit,
 ) {
     val state = content.state
     val dark = content.darkTheme
-    val cardColor = if (dark) Color(0xFF262626) else Color(0xFFF7F7F7)
+    // Dark: a see-through card over a lightly dimmed screen, as One UI (black at 30% and 10%).
+    val cardColor = if (dark) Color(0x4D000000) else Color(0xFFF7F7F7)
+    val scrimColor = if (dark) Color(0x1A000000) else Color(0x66000000)
     val textColor = if (dark) Color(0xFFF2F2F2) else Color(0xFF1A1A1A)
-    val labels = LabelStyle(textColor, shadow = false)
+    val labels = LabelStyle(textColor, shadow = dark)
     val sorted = remember(apps) { apps.sortedWith(AppSorting.comparator { it.second.label }) }
     var pickerOpen by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
@@ -116,13 +122,15 @@ fun FolderPanel(
             onClosed()
         }
     }
+    LaunchedEffect(progress) { snapshotFlow { progress.value.coerceIn(0f, 1f) }.collect(onProgress) }
+    DisposableEffect(progress) { onDispose { onProgress(0f) } }
     val close: () -> Unit = onDismiss
     var cardBounds by remember { mutableStateOf(Rect.Zero) }
 
     Box(
         Modifier
             .fillMaxSize()
-            .drawBehind { drawRect(Color(0x66000000), alpha = progress.value.coerceIn(0f, 1f)) }
+            .drawBehind { drawRect(scrimColor, alpha = progress.value.coerceIn(0f, 1f)) }
             .tapToDismiss(close)
             .windowInsetsPadding(WindowInsets.systemBars)
             .imePadding(),
@@ -149,7 +157,7 @@ fun FolderPanel(
                         TransformOrigin.Center
                     }
                 }
-                .clip(RoundedCornerShape(28.dp))
+                .clip(RoundedCornerShape(34.dp))
                 .background(cardColor)
                 .tapToDismiss { focusManager.clearFocus() }
                 .padding(horizontal = 12.dp, vertical = 16.dp),
@@ -187,8 +195,8 @@ fun FolderPanel(
                         LauncherIcon(stringResource(R.string.folder_add_apps), labels, onClick = { pickerOpen = true }) { iconModifier ->
                             Box(
                                 iconModifier
-                                    .clip(RoundedCornerShape(30))
-                                    .border(1.5.dp, textColor.copy(alpha = 0.3f), RoundedCornerShape(30)),
+                                    .clip(IconShape)
+                                    .border(1.5.dp, textColor.copy(alpha = 0.3f), IconShape),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(painterResource(R.drawable.ic_add), contentDescription = null, tint = textColor.copy(alpha = 0.7f))
