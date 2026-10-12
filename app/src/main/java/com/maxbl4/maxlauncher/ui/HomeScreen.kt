@@ -464,26 +464,33 @@ private fun PageIndicator(layout: HomeLayout, currentPage: Int, color: Color, vi
 private fun EditBar(state: LauncherState, color: Color) {
     val context = LocalContext.current
     val wallpaperTitle = stringResource(R.string.edit_wallpaper)
+    // Equal thirds, so the icons line up regardless of label length.
     Row(
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        modifier = Modifier.fillMaxWidth().height(104.dp),
+        modifier = Modifier.fillMaxWidth().height(104.dp).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        EditBarButton(R.drawable.ic_wallpaper, wallpaperTitle, color) {
+        EditBarButton(R.drawable.ic_wallpaper, wallpaperTitle, color, Modifier.weight(1f)) {
             val intent = Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), wallpaperTitle)
             runCatching { context.startActivity(intent) }
         }
-        EditBarButton(R.drawable.ic_widgets, stringResource(R.string.edit_widgets), color) {
+        EditBarButton(R.drawable.ic_widgets, stringResource(R.string.edit_widgets), color, Modifier.weight(1f)) {
             state.widgetPickerOpen = true
         }
-        EditBarButton(R.drawable.ic_settings, stringResource(R.string.edit_settings), color) {
+        EditBarButton(R.drawable.ic_settings, stringResource(R.string.edit_settings), color, Modifier.weight(1f)) {
             context.startActivity(Intent(context, SettingsActivity::class.java))
         }
     }
 }
 
 @Composable
-private fun EditBarButton(icon: Int, label: String, color: Color, onClick: () -> Unit) {
+private fun EditBarButton(icon: Int, label: String, color: Color, modifier: Modifier, onClick: () -> Unit) {
+    Box(modifier, contentAlignment = Alignment.Center) {
+        EditBarButtonContent(icon, label, color, onClick)
+    }
+}
+
+@Composable
+private fun EditBarButtonContent(icon: Int, label: String, color: Color, onClick: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
