@@ -71,9 +71,12 @@ suspend fun PointerInputScope.launcherGestures(state: LauncherState, haptics: Ha
             }
             Outcome.Moved -> {
                 val vertical = abs(total.y) > abs(total.x)
-                // Widgets may scroll vertically themselves.
-                val onWidget = (state.hitTest(down.position)?.first as? DragSource.HomeEntry)?.item is WidgetItem
-                if (vertical && state.canSwipeDrawer && !onWidget) {
+                // A widget keeps the swipe only if it has a list under the finger that can scroll that
+                // way (a finger moving up scrolls the content down).
+                val widget = (state.hitTest(down.position)?.first as? DragSource.HomeEntry)?.item as? WidgetItem
+                val widgetScrolls = widget != null &&
+                    state.widgetCanScroll(widget.id, down.position, if (total.y < 0) 1 else -1)
+                if (vertical && state.canSwipeDrawer && !widgetScrolls) {
                     swipeDrawer(state, down.id, last, sign(total.y), swipeDistance, flingVelocity)
                 }
             }

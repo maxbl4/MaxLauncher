@@ -72,7 +72,7 @@ import kotlin.math.roundToInt
 
 /** An app widget hosted on the home screen. */
 @Composable
-fun WidgetView(item: WidgetItem, widgets: WidgetHostManager, modifier: Modifier = Modifier) {
+fun WidgetView(item: WidgetItem, widgets: WidgetHostManager, state: LauncherState, modifier: Modifier = Modifier) {
     val info = remember(item.appWidgetId) { widgets.info(item.appWidgetId) }
     if (info == null) {
         Box(modifier.clip(RoundedCornerShape(16.dp)).background(Color(0x33888888)), contentAlignment = Alignment.Center) {
@@ -83,7 +83,8 @@ fun WidgetView(item: WidgetItem, widgets: WidgetHostManager, modifier: Modifier 
     BoxWithConstraints(modifier) {
         val size = SizeF(maxWidth.value, maxHeight.value)
         AndroidView(
-            factory = { context -> widgets.createView(context, item.appWidgetId, info) },
+            factory = { context -> widgets.createView(context, item.appWidgetId, info).also { state.registerWidgetView(item.id, it) } },
+            onRelease = { state.unregisterWidgetView(item.id, it) },
             update = { view ->
                 if (view.tag != size) {
                     view.tag = size

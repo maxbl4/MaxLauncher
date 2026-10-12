@@ -1,5 +1,7 @@
 package com.maxbl4.maxlauncher.ui
 
+import android.view.View
+import android.view.ViewGroup
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -188,6 +190,34 @@ class LauncherState(private val scope: CoroutineScope) {
 
     fun unregisterGrid(container: Container) {
         grids.remove(container)
+    }
+
+    private val widgetViews = HashMap<Long, View>()
+
+    fun registerWidgetView(itemId: Long, view: View) {
+        widgetViews[itemId] = view
+    }
+
+    fun unregisterWidgetView(itemId: Long, view: View) {
+        if (widgetViews[itemId] === view) widgetViews.remove(itemId)
+    }
+
+    /**
+     * Whether the widget has something under [position] (window coordinates) that can scroll
+     * vertically in [direction] (1 = content down, -1 = up), e.g. a list that is not at its end.
+     */
+    fun widgetCanScroll(itemId: Long, position: Offset, direction: Int): Boolean =
+        widgetViews[itemId]?.canScrollVerticallyAt(position.x, position.y, direction) == true
+
+    private fun View.canScrollVerticallyAt(x: Float, y: Float, direction: Int): Boolean {
+        val origin = IntArray(2).also(::getLocationInWindow)
+        if (x < origin[0] || y < origin[1] || x > origin[0] + width || y > origin[1] + height) return false
+        if (canScrollVertically(direction)) return true
+        if (this !is ViewGroup) return false
+        return (childCount - 1 downTo 0).any { i ->
+            val child = getChildAt(i)
+            child.isShown && child.canScrollVerticallyAt(x, y, direction)
+        }
     }
 
     fun setRemoveZone(bounds: Rect?) {

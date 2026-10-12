@@ -419,7 +419,7 @@ private fun HomeItemView(item: HomeItem, content: HomeContent) {
                 }
             }
         }
-        is WidgetItem -> WidgetView(item, content.widgets, modifier.fillMaxSize().padding(4.dp))
+        is WidgetItem -> WidgetView(item, content.widgets, state, modifier.fillMaxSize().padding(4.dp))
     }
 }
 
