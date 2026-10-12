@@ -96,16 +96,19 @@ fun LauncherScreen(
     val wallpaperDarkText = rememberWallpaperSupportsDarkText()
     val homeLabels = if (wallpaperDarkText) LabelStyle(Color(0xFF1A1A1A), shadow = false) else LabelStyle(Color.White, shadow = true)
     val currentLayout = layout
-    // While an icon is held over an occupied cell, the others move aside to show where it will go.
+    // While an icon is held over a cell for a moment, the others move aside to show where it will go.
     val dragSource = state.drag?.source
-    val hover = state.hover as? DropTarget.Cell
-    val shownLayout = remember(currentLayout, dragSource, hover) {
-        if (currentLayout == null || dragSource == null || hover == null || hover.merge) currentLayout
-        else currentLayout.withDrop(dragSource, hover)
+    val preview = state.previewHover as? DropTarget.Cell
+    val shownLayout = remember(currentLayout, dragSource, preview) {
+        if (currentLayout == null || dragSource == null || preview == null) currentLayout
+        else currentLayout.withDrop(dragSource, preview)
     }
     // An app dragged in from the drawer gets the next id in the preview; it is drawn by the drag overlay.
     val previewHiddenId = if (dragSource is DragSource.DrawerApp || dragSource is DragSource.DrawerFolderApp) currentLayout?.nextId else null
-    val content = HomeContent(state, actions, appsByRef, shortcuts, homeLabels, darkTheme, app.widgets, previewHiddenId)
+    // Kept across recompositions: a new instance would recompose every icon.
+    val content = remember(state, actions, appsByRef, shortcuts, homeLabels, darkTheme, previewHiddenId) {
+        HomeContent(state, actions, appsByRef, shortcuts, homeLabels, darkTheme, app.widgets, previewHiddenId)
+    }
 
     val drawerContent = remember(apps, drawerLayout, settings, workPaused) {
         val hidden = settings.hiddenApps
@@ -127,11 +130,11 @@ fun LauncherScreen(
         state.layoutLocked = settings.lockLayout
         state.doubleTapToLock = settings.doubleTapToLock
         state.onDoubleTap = onLockScreen
-        state.onDrop = { source, target ->
+        state.onDrop = { source, target, preview ->
             if (source is DragSource.NewWidget && target is DropTarget.Cell && target.container is Container.Page) {
                 onAddWidget(source.option, target.container.pageId, target.x to target.y)
             } else {
-                applyDrop(app, source, target)
+                applyDrop(app, source, target, preview as? DropTarget.Cell)
             }
         }
     }
@@ -199,7 +202,7 @@ fun LauncherScreen(
         state.menu?.let { request ->
             ItemMenu(request, content, homeRepository, app.drawer, onDismiss = { state.menu = null })
         }
-        state.drag?.let { drag -> DragOverlay(drag, content) }
+        state.drag?.let { drag -> DragOverlay(drag, state, content) }
     }
 }
 
@@ -267,7 +270,7 @@ private fun DrawerFolder(state: LauncherState, layout: DrawerLayout, content: Ho
 }
 
 /** Applies a finished drag: drawer folder edits or home layout edits. */
-private fun applyDrop(app: LauncherApplication, source: DragSource, target: DropTarget) {
+private fun applyDrop(app: LauncherApplication, source: DragSource, target: DropTarget, preview: DropTarget.Cell?) {
     val ref = source.appRef
     when (target) {
         is DropTarget.DrawerOnApp -> if (ref != null) app.drawer.update { it.merge(ref, target.entry.ref) }
@@ -278,7 +281,7 @@ private fun applyDrop(app: LauncherApplication, source: DragSource, target: Drop
             is DragSource.FolderEntry -> app.homeRepository.update { it.remove(source.item.id) }
             else -> Unit
         }
-        is DropTarget.Cell -> app.homeRepository.update { it.withDrop(source, target) }
+        is DropTarget.Cell -> app.homeRepository.update { it.withDrop(source, target, preview) }
     }
 }
 
@@ -289,8 +292,34 @@ private val DragSource.appRef: AppRef?
         else -> null
     }
 
+/**
+ * The drop onto [target] with the icons pushed aside by [preview] kept where they are shown: a
+ * merge goes into the icon under the finger at its shown spot.
+ */
+private fun HomeLayout.withDrop(source: DragSource, target: DropTarget.Cell, preview: DropTarget.Cell?): HomeLayout {
+    val targetId = target.targetId
+    if (!target.merge || targetId == null || preview == null || preview.merge || preview.container != target.container) {
+        return withDrop(source, target)
+    }
+    val movedId = when (source) {
+        is DragSource.HomeEntry -> source.item.id
+        is DragSource.FolderEntry -> source.item.id
+        is DragSource.DrawerApp, is DragSource.DrawerFolderApp -> nextId
+        else -> return withDrop(source, target)
+    }
+    val shown = withDrop(source, preview)
+    val (container, placed) = shown.findPlaced(targetId) ?: return withDrop(source, target)
+    return shown.move(movedId, container, placed.x, placed.y, merge = true)
+}
+
 /** The home layout after dropping [source] onto [target]; also used to preview the drop. */
-private fun HomeLayout.withDrop(source: DragSource, target: DropTarget.Cell): HomeLayout = when (source) {
+private fun HomeLayout.withDrop(source: DragSource, cell: DropTarget.Cell): HomeLayout {
+    // A merge goes into the item under the finger, wherever it is now.
+    val target = cell.targetId?.let { id -> findPlaced(id)?.let { (container, placed) -> cell.copy(container = container, x = placed.x, y = placed.y) } } ?: cell
+    return withDropAt(source, target)
+}
+
+private fun HomeLayout.withDropAt(source: DragSource, target: DropTarget.Cell): HomeLayout = when (source) {
     is DragSource.DrawerApp, is DragSource.DrawerFolderApp -> {
         val (id, next) = allocateId()
         next.drop(AppItem(id, source.appRef!!), target.container, target.x, target.y, merge = target.merge) ?: this
@@ -305,12 +334,15 @@ private fun HomeLayout.shortcutItems(): List<ShortcutItem> =
 
 /** The item following the finger during a drag. */
 @Composable
-private fun DragOverlay(drag: DragState, content: HomeContent) {
+private fun DragOverlay(drag: DragState, state: LauncherState, content: HomeContent) {
     val density = LocalDensity.current
-    val topLeft = drag.position - drag.grabOffset
     Box(
         Modifier
-            .offset { IntOffset(topLeft.x.roundToInt(), topLeft.y.roundToInt()) }
+            // Read while placing, so following the finger does not recompose anything.
+            .offset {
+                val topLeft = state.dragPosition - drag.grabOffset
+                IntOffset(topLeft.x.roundToInt(), topLeft.y.roundToInt())
+            }
             .size(with(density) { drag.size.width.toDp() }, with(density) { drag.size.height.toDp() })
             .graphicsLayer {
                 scaleX = DRAG_SCALE

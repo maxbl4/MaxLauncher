@@ -1,5 +1,6 @@
 package com.maxbl4.maxlauncher.ui
 
+import android.view.MotionEvent
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.geometry.Offset
@@ -165,7 +166,8 @@ private suspend fun AwaitPointerEventScope.dragAfterLongPress(
     val slop = viewConfiguration.touchSlop
     var dragging = false
     while (true) {
-        val change = awaitChange(id)
+        val event = awaitPointerEvent(PointerEventPass.Initial)
+        val change = event.changes.firstOrNull { it.id == id }
         if (change == null) {
             if (dragging) state.cancelDrag()
             return
@@ -176,8 +178,13 @@ private suspend fun AwaitPointerEventScope.dragAfterLongPress(
             state.startDrag(source, change.position, bounds)
         }
         if (!change.pressed) {
-            // Released without moving: the menu stays open.
-            if (dragging) state.endDrag(change.position)
+            // Released without moving: the menu stays open. A touch the system took away (a
+            // call screen, the notification shade) puts the item back instead of dropping it;
+            // Compose reports it as a release with no MotionEvent behind it.
+            if (dragging) {
+                val cancelled = event.motionEvent.let { it == null || it.actionMasked == MotionEvent.ACTION_CANCEL }
+                if (cancelled) state.cancelDrag() else state.endDrag(change.position)
+            }
             return
         }
         if (dragging) state.dragTo(change.position)

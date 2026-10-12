@@ -69,8 +69,9 @@ sealed interface DropTarget {
     /**
      * A grid cell. [merge]: the finger is over the middle of an icon, so a dropped app makes a
      * folder with it; otherwise icons are pushed aside. In the dock [x] is an index.
+     * [targetId]: with [merge], the item under the finger (it may be shown pushed aside from its cell).
      */
-    data class Cell(val container: Container, val x: Int, val y: Int, val merge: Boolean = false) : DropTarget
+    data class Cell(val container: Container, val x: Int, val y: Int, val merge: Boolean = false, val targetId: Long? = null) : DropTarget
     data object Remove : DropTarget
 
     // Inside the app drawer.
@@ -84,7 +85,6 @@ data class MenuRequest(val source: DragSource, val bounds: Rect)
 /** [widgetSpans]: cells the dragged widget takes (null for icons). */
 data class DragState(
     val source: DragSource,
-    val position: Offset,
     val grabOffset: Offset,
     val size: Size,
     val widgetSpans: Pair<Int, Int>? = null,
@@ -120,8 +120,18 @@ class LauncherState(private val scope: CoroutineScope) {
     /** The current drag happens inside the app drawer (folders), not on the home screen. */
     var dragInDrawer by mutableStateOf(false)
         private set
+    /** Where the finger is during a drag. Kept apart from [drag] and read only while drawing, so
+     *  moving the finger does not recompose the screen. */
+    var dragPosition by mutableStateOf(Offset.Zero)
+        private set
+    /** What a drop would hit now (the highlighted cell). */
     var hover by mutableStateOf<DropTarget?>(null)
         private set
+    /** [hover] once it stayed for [REORDER_DELAY_MS]: what the home screen previews (icons pushed
+     *  aside), so passing over cells does not shake the icons. */
+    var previewHover by mutableStateOf<DropTarget?>(null)
+        private set
+    private var previewJob: Job? = null
     var pageDrag by mutableStateOf<PageDrag?>(null)
         private set
 
@@ -130,7 +140,7 @@ class LauncherState(private val scope: CoroutineScope) {
     var doubleTapToLock by mutableStateOf(false)
 
     /** Set by the screen: applies a finished drag. */
-    var onDrop: (DragSource, DropTarget) -> Unit = { _, _ -> }
+    var onDrop: (DragSource, DropTarget, preview: DropTarget?) -> Unit = { _, _, _ -> }
 
     /** Set by the home screen: scrolls pages by +1/-1 while something is held at an edge. */
     var onEdgeScroll: suspend (direction: Int, mayAddPage: Boolean) -> Unit = { _, _ -> }
@@ -271,29 +281,71 @@ class LauncherState(private val scope: CoroutineScope) {
         } else {
             position
         }
-        val area = grids.values.firstOrNull { it.bounds.contains(point) } ?: return null
+        // Pages sliding in or out (switching pages at an edge) are not targets until they settle.
+        val area = grids.values.firstOrNull { it.bounds.contains(point) && it.isSettled() } ?: return null
         val cellWidth = area.bounds.width / area.columns
         val cellHeight = area.bounds.height / area.rows
         val fx = (point.x - area.bounds.left) / cellWidth
         val fy = (point.y - area.bounds.top) / cellHeight
-        val inMiddleX = abs(fx - floor(fx) - 0.5f) < MERGE_ZONE
-        val inMiddleY = abs(fy - floor(fy) - 0.5f) < MERGE_ZONE
-        if (area.container == Container.Dock) {
-            if (isWidget) return null
-            // A row of icons: over the middle of one merges with it, elsewhere inserts between.
-            return if (inMiddleX && fx.toInt() < area.columns) {
-                DropTarget.Cell(Container.Dock, fx.toInt(), 0, merge = true)
-            } else {
-                DropTarget.Cell(Container.Dock, fx.roundToInt().coerceIn(0, area.columns), 0)
-            }
-        }
         val x = fx.toInt().coerceIn(0, area.columns - 1)
         val y = fy.toInt().coerceIn(0, area.rows - 1)
-        return DropTarget.Cell(area.container, x, y, merge = !isWidget && inMiddleX && inMiddleY)
+        if (!isWidget) {
+            // Over the middle of an icon, where it is shown now (maybe pushed aside): merge with it.
+            val hit = hitTest(position, Layer.HOME, exclude = source)
+            val item = (hit?.first as? DragSource.HomeEntry)?.item
+            if (hit != null && item != null && item !is WidgetItem &&
+                abs(position.x - hit.second.center.x) < cellWidth * MERGE_ZONE &&
+                abs(position.y - hit.second.center.y) < cellHeight * MERGE_ZONE
+            ) {
+                return DropTarget.Cell(area.container, x, y, merge = true, targetId = item.id)
+            }
+        }
+        if (area.container == Container.Dock) {
+            if (isWidget) return null
+            // A row of icons: away from their middles a drop inserts between them.
+            return DropTarget.Cell(Container.Dock, fx.roundToInt().coerceIn(0, area.columns), 0)
+        }
+        return DropTarget.Cell(area.container, x, y)
     }
+
+    private fun GridArea.isSettled(): Boolean =
+        container !is Container.Page || (bounds.left > -1f && bounds.right < rootSize.width + 1f)
 
     private val DragSource.isWidget: Boolean
         get() = this is DragSource.NewWidget || (this as? DragSource.HomeEntry)?.item is WidgetItem
+
+    /**
+     * Highlights [target] at once; the preview (icons pushed aside) follows when the finger stays
+     * there for a moment. Over an icon (merge) the preview stays as it is, so the icon under the
+     * finger does not slide away.
+     */
+    private fun updateHover(target: DropTarget?) {
+        val changed = target != hover
+        hover = target
+        if (target is DropTarget.Cell && target.merge) {
+            previewJob?.cancel()
+            previewJob = null
+            return
+        }
+        if (target == previewHover) {
+            previewJob?.cancel()
+            previewJob = null
+        } else if (changed || previewJob == null) {
+            previewJob?.cancel()
+            previewJob = scope.launch {
+                delay(REORDER_DELAY_MS)
+                previewHover = target
+                previewJob = null
+            }
+        }
+    }
+
+    private fun clearHover() {
+        previewJob?.cancel()
+        previewJob = null
+        hover = null
+        previewHover = null
+    }
 
     // --- Long press, drag and drop ---
 
@@ -312,7 +364,7 @@ class LauncherState(private val scope: CoroutineScope) {
                 editMode = false
                 val cell = homeCellSize() ?: Size(bounds.width / 2, bounds.height / 2)
                 val size = Size(cell.width * source.option.spanX, cell.height * source.option.spanY)
-                DragState(source, position, Offset(size.width / 2, size.height / 2), size, source.option.spanX to source.option.spanY)
+                DragState(source, Offset(size.width / 2, size.height / 2), size, source.option.spanX to source.option.spanY)
             }
             else -> {
                 when (source) {
@@ -325,18 +377,19 @@ class LauncherState(private val scope: CoroutineScope) {
                 } else {
                     null
                 }
-                DragState(source, position, position - bounds.topLeft, bounds.size, spans)
+                DragState(source, position - bounds.topLeft, bounds.size, spans)
             }
         }
+        dragPosition = position
         drag = state
-        hover = dropTargetAt(position, state)
+        updateHover(dropTargetAt(position, state))
     }
 
     private var edgeJob: Job? = null
 
     fun dragTo(position: Offset) {
-        val current = drag?.copy(position = position) ?: return
-        drag = current
+        val current = drag ?: return
+        dragPosition = position
         // Apps dragged to the top of the drawer continue on the home screen.
         if (dragInDrawer && !layoutLocked && current.source !is DragSource.DrawerFolderEntry &&
             toHomeZone?.contains(position) == true
@@ -344,10 +397,13 @@ class LauncherState(private val scope: CoroutineScope) {
             dragInDrawer = false
             drawer.close()
         }
-        hover = dropTargetAt(position, current)
+        updateHover(dropTargetAt(position, current))
         val inDrawer = dragInDrawer
         handleEdge(position) { direction ->
             if (inDrawer) onDrawerEdgeScroll(direction) else onEdgeScroll(direction, true)
+            // The finger may rest at the edge: aim at the page that came in once it is laid out.
+            delay(SETTLE_MS)
+            drag?.let { updateHover(dropTargetAt(dragPosition, it)) }
         }
     }
 
@@ -381,17 +437,18 @@ class LauncherState(private val scope: CoroutineScope) {
         val current = drag ?: return
         stopEdge()
         val target = dropTargetAt(position, current)
+        val preview = previewHover
         drag = null
-        hover = null
+        clearHover()
         dragInDrawer = false
-        if (target != null) onDrop(current.source, target)
+        if (target != null) onDrop(current.source, target, preview)
         onDragFinished()
     }
 
     fun cancelDrag() {
         stopEdge()
         drag = null
-        hover = null
+        clearHover()
         dragInDrawer = false
         onDragFinished()
     }
@@ -448,6 +505,10 @@ class LauncherState(private val scope: CoroutineScope) {
         const val EDGE_FRACTION = 0.06f
         const val EDGE_DELAY_MS = 450L
         const val EDGE_REPEAT_MS = 900L
+        /** How long the finger stays over a cell before the icons make room there. */
+        const val REORDER_DELAY_MS = 300L
+        /** Lets a page that slid in get laid out before it is hit-tested. */
+        const val SETTLE_MS = 50L
         /** Half-size of the middle part of a cell (as a fraction) where a dropped app makes a folder. */
         const val MERGE_ZONE = 0.25f
     }
