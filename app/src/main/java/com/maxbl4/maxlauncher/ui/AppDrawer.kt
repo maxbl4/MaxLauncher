@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -156,7 +155,7 @@ fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modi
                     alpha = p * (1f - state.drawerFolderProgress)
                     translationY = drawer.enterDirection * (1f - p) * enterOffsetPx
                 }
-                .windowInsetsPadding(WindowInsets.systemBars)
+                .windowInsetsPadding(WindowInsets.launcherBars)
                 .padding(horizontal = 8.dp),
         ) {
             // The search field rides on top of the keyboard; the pages stay put under it, only

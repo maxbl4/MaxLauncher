@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -135,7 +134,7 @@ fun FolderPanel(
             .fillMaxSize()
             .drawBehind { drawRect(scrimColor, alpha = progress.value.coerceIn(0f, 1f)) }
             .tapToDismiss(close)
-            .windowInsetsPadding(WindowInsets.systemBars),
+            .windowInsetsPadding(WindowInsets.launcherBars),
     ) {
         // As One UI: a large name above the card, the add button over its right edge and a card
         // of a fixed size with 3 × 4 apps per page.
@@ -307,7 +306,7 @@ fun AppChecklist(
             .fillMaxSize()
             .background(background)
             .tapToDismiss {}
-            .windowInsetsPadding(WindowInsets.systemBars),
+            .windowInsetsPadding(WindowInsets.launcherBars),
     ) {
         Text(title, color = textColor, fontSize = 20.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp))
         LazyColumn(Modifier.weight(1f)) {

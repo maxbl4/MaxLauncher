@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
@@ -150,7 +149,7 @@ fun HomeScreen(
 
     var pageToDelete by remember { mutableStateOf<HomePage?>(null) }
 
-    Column(modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars)) {
+    Column(modifier.fillMaxSize().windowInsetsPadding(WindowInsets.launcherBars)) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             HorizontalPager(
                 state = pagerState,
