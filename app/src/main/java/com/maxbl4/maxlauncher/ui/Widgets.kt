@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -34,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -49,6 +51,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -57,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.graphics.drawable.toBitmap
 import com.maxbl4.maxlauncher.R
+import com.maxbl4.maxlauncher.apps.AppSearch
 import com.maxbl4.maxlauncher.apps.AppSorting
 import com.maxbl4.maxlauncher.home.Placed
 import com.maxbl4.maxlauncher.home.WidgetItem
@@ -233,7 +237,8 @@ fun WidgetPicker(
             .fillMaxSize()
             .background(background)
             .tapToDismiss {}
-            .windowInsetsPadding(WindowInsets.systemBars),
+            .windowInsetsPadding(WindowInsets.systemBars)
+            .imePadding(),
     ) {
         Text(
             stringResource(R.string.widgets_title),
@@ -241,8 +246,28 @@ fun WidgetPicker(
             fontSize = 20.sp,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
         )
-        val list = options
-        if (list == null) return@Column
+        var query by remember { mutableStateOf("") }
+        SearchField(
+            query = query,
+            onQueryChange = { query = it },
+            contentColor = textColor,
+            onGo = {},
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+        )
+        val all = options ?: return@Column
+        // Search by widget name and by app name ("часы", "погода", "chrome").
+        val list = remember(all, query) {
+            if (query.isBlank()) all else AppSearch.filter(all, query) { "${it.appLabel} ${it.label}" }
+        }
+        if (list.isEmpty()) {
+            Text(
+                stringResource(R.string.search_nothing_found),
+                color = textColor.copy(alpha = 0.6f),
+                modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
+                textAlign = TextAlign.Center,
+            )
+            return@Column
+        }
         // Each app's name is shown above its first widget.
         val withHeaders = list.mapIndexed { i, option -> option to (i == 0 || list[i - 1].appLabel != option.appLabel) }
         LazyColumn(Modifier.fillMaxSize()) {

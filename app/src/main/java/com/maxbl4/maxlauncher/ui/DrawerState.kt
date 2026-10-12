@@ -26,7 +26,11 @@ class DrawerState(private val scope: CoroutineScope) {
     var isOpen by mutableStateOf(false)
         private set
 
-    /** +1 when the drawer enters from below (swipe up), -1 from above (swipe down). */
+    /**
+     * Where the drawer content sits when hidden: +1 below the screen, -1 above. Set from each
+     * swipe so the content always moves with the finger: a swipe up brings it in from below and
+     * takes it away upwards; a swipe down the other way round.
+     */
     var enterDirection by mutableIntStateOf(1)
         private set
 
@@ -69,7 +73,9 @@ class DrawerState(private val scope: CoroutineScope) {
         swipeSign = sign
         swiped = 0f
         swipeProgress = if (isOpen) 1f else 0f
-        if (!swipeStartedOpen) enterDirection = if (sign < 0) 1 else -1
+        // A swipe up brings the content in from below when opening and takes it up when closing.
+        val swipeUp = sign < 0
+        enterDirection = if (swipeUp != swipeStartedOpen) 1 else -1
     }
 
     /** [distance] is the finger travel for a full open/close. */

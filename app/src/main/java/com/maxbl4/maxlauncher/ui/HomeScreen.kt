@@ -394,7 +394,7 @@ private fun HomeItemView(item: HomeItem, content: HomeContent) {
         }
         is FolderItem -> {
             val icons = remember(item, content.appsByRef) { folderIcons(item, content.appsByRef) }
-            LauncherIcon(item.title, content.labelStyle, onClick = { state.openFolderId = item.id }, modifier = modifier) {
+            LauncherIcon(item.title, content.labelStyle, onClick = { bounds -> state.folderOrigin = bounds.center; state.openFolderId = item.id }, modifier = modifier) {
                 FolderIcon(icons, it, homeFolderBackground(content.darkTheme))
             }
         }

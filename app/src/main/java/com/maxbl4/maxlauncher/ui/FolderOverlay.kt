@@ -35,8 +35,21 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,11 +102,28 @@ fun FolderPanel(
     var pickerOpen by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
 
+    // The card grows out of the tapped folder icon and shrinks back into it when closed.
+    val origin = remember(folderId) { state.folderOrigin }
+    val progress = remember(folderId) { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(folderId) {
+        progress.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow))
+    }
+    val close: () -> Unit = {
+        focusManager.clearFocus()
+        scope.launch {
+            progress.animateTo(0f, tween(durationMillis = 180))
+            onDismiss()
+        }
+    }
+    BackHandler(enabled = !pickerOpen, onBack = close)
+    var cardBounds by remember { mutableStateOf(Rect.Zero) }
+
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color(0x66000000))
-            .tapToDismiss(onDismiss)
+            .drawBehind { drawRect(Color(0x66000000), alpha = progress.value.coerceIn(0f, 1f)) }
+            .tapToDismiss(close)
             .windowInsetsPadding(WindowInsets.systemBars)
             .imePadding(),
         contentAlignment = Alignment.Center,
@@ -102,6 +132,23 @@ fun FolderPanel(
             Modifier
                 .padding(horizontal = 20.dp)
                 .fillMaxWidth()
+                // Measured before the layer below, so the bounds are not affected by its scale.
+                .onGloballyPositioned { cardBounds = it.boundsInRoot() }
+                .graphicsLayer {
+                    val p = progress.value
+                    val scale = FOLDER_START_SCALE + (1f - FOLDER_START_SCALE) * p
+                    scaleX = scale
+                    scaleY = scale
+                    alpha = p.coerceIn(0f, 1f)
+                    transformOrigin = if (origin != null && cardBounds.width > 0f) {
+                        TransformOrigin(
+                            ((origin.x - cardBounds.left) / cardBounds.width).coerceIn(0f, 1f),
+                            ((origin.y - cardBounds.top) / cardBounds.height).coerceIn(0f, 1f),
+                        )
+                    } else {
+                        TransformOrigin.Center
+                    }
+                }
                 .clip(RoundedCornerShape(28.dp))
                 .background(cardColor)
                 .tapToDismiss { focusManager.clearFocus() }
@@ -167,6 +214,9 @@ fun FolderPanel(
         )
     }
 }
+
+/** Folder card scale at the start of the opening animation (relative to its full size). */
+private const val FOLDER_START_SCALE = 0.15f
 
 /** Full-screen list of apps with checkboxes (folder content, hidden apps). */
 @Composable

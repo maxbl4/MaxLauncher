@@ -83,6 +83,9 @@ class LauncherState(private val scope: CoroutineScope) {
     var editMode by mutableStateOf(false)
     var openFolderId by mutableStateOf<Long?>(null)
     var openDrawerFolderId by mutableStateOf<Long?>(null)
+
+    /** Centre of the folder icon that was tapped; the open folder grows out of it. */
+    var folderOrigin: Offset? = null
     var resizingWidgetId by mutableStateOf<Long?>(null)
     var widgetPickerOpen by mutableStateOf(false)
     var menu by mutableStateOf<MenuRequest?>(null)

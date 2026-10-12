@@ -262,7 +262,7 @@ private fun DrawerEntryView(entry: DrawerEntry<AppEntry>, content: HomeContent, 
         .then(if (hovered) Modifier.clip(RoundedCornerShape(18.dp)).background(labels.color.copy(alpha = 0.14f)) else Modifier)
     when (entry) {
         is DrawerEntry.App -> AppIcon(entry.app, content.actions, labels, modifier)
-        is DrawerEntry.Folder -> LauncherIcon(entry.folder.title, labels, onClick = { state.openDrawerFolderId = entry.folder.id }, modifier = modifier) {
+        is DrawerEntry.Folder -> LauncherIcon(entry.folder.title, labels, onClick = { bounds -> state.folderOrigin = bounds.center; state.openDrawerFolderId = entry.folder.id }, modifier = modifier) {
             FolderIcon(entry.apps.map { app -> app.icon }, it, drawerFolderBackground(content.darkTheme))
         }
     }
@@ -313,7 +313,7 @@ private fun ToHomeZone(state: LauncherState, modifier: Modifier) {
 }
 
 @Composable
-private fun SearchField(
+internal fun SearchField(
     query: String,
     onQueryChange: (String) -> Unit,
     contentColor: Color,
