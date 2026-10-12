@@ -98,7 +98,9 @@ fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modi
 
     var workTab by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    val searchable = if (workTab) drawerContent.workApps else drawerContent.searchable
+    // As One UI: search covers personal and work apps from either tab, personal ones first
+    // (the search keeps the order of equally good matches).
+    val searchable = remember(drawerContent) { drawerContent.searchable + drawerContent.workApps }
     val results = remember(searchable, query) { AppSearch.filter(searchable, query) { it.label } }
     val focusManager = LocalFocusManager.current
     LaunchedEffect(drawer.isOpen) {

@@ -12,21 +12,21 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -44,6 +44,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -59,12 +60,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,8 +79,8 @@ import com.maxbl4.maxlauncher.apps.AppSorting
 import com.maxbl4.maxlauncher.home.AppRef
 
 /**
- * An open folder (on the home screen or in the drawer): editable name, its apps in alphabetical
- * order and an "Add" tile that opens the app picker. Tapping outside closes it; long press and
+ * An open folder (on the home screen or in the drawer), laid out as in One UI: an editable name,
+ * a button that opens the app picker and the apps in alphabetical order, 3 × 4 per page. Tapping outside closes it; long press and
  * drag of the apps are handled at the root, like everywhere else.
  *
  * [apps] are the folder's apps with the drag source each one registers as.
@@ -132,79 +135,126 @@ fun FolderPanel(
             .fillMaxSize()
             .drawBehind { drawRect(scrimColor, alpha = progress.value.coerceIn(0f, 1f)) }
             .tapToDismiss(close)
-            .windowInsetsPadding(WindowInsets.systemBars)
-            .imePadding(),
-        contentAlignment = Alignment.Center,
+            .windowInsetsPadding(WindowInsets.systemBars),
     ) {
-        Column(
-            Modifier
-                .padding(horizontal = 20.dp)
-                .fillMaxWidth()
-                // Measured before the layer below, so the bounds are not affected by its scale.
-                .onGloballyPositioned { cardBounds = it.boundsInRoot() }
-                .graphicsLayer {
-                    val p = progress.value
-                    val scale = FOLDER_START_SCALE + (1f - FOLDER_START_SCALE) * p
-                    scaleX = scale
-                    scaleY = scale
-                    alpha = p.coerceIn(0f, 1f)
-                    transformOrigin = if (origin != null && cardBounds.width > 0f) {
-                        TransformOrigin(
-                            ((origin.x - cardBounds.left) / cardBounds.width).coerceIn(0f, 1f),
-                            ((origin.y - cardBounds.top) / cardBounds.height).coerceIn(0f, 1f),
-                        )
-                    } else {
-                        TransformOrigin.Center
-                    }
-                }
-                .clip(RoundedCornerShape(34.dp))
-                .background(cardColor)
-                .tapToDismiss { focusManager.clearFocus() }
-                .padding(horizontal = 12.dp, vertical = 16.dp),
-        ) {
+        // As One UI: a large name above the card, the add button over its right edge and a card
+        // of a fixed size with 3 × 4 apps per page.
+        Column(Modifier.fillMaxSize().padding(horizontal = 40.dp)) {
             var name by remember(folderId) { mutableStateOf(title) }
-            BasicTextField(
-                value = name,
-                onValueChange = {
-                    name = it
-                    onRename(it)
-                },
-                singleLine = true,
-                textStyle = TextStyle(color = textColor, fontSize = 20.sp, textAlign = TextAlign.Center),
-                cursorBrush = SolidColor(textColor),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                decorationBox = { inner ->
-                    Box(contentAlignment = Alignment.Center) {
-                        if (name.isEmpty()) {
-                            Text(stringResource(R.string.folder_name_hint), color = textColor.copy(alpha = 0.45f), fontSize = 20.sp)
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(top = 24.dp)
+                    .graphicsLayer { alpha = progress.value.coerceIn(0f, 1f) },
+                contentAlignment = Alignment.Center,
+            ) {
+                BasicTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        onRename(it)
+                    },
+                    singleLine = true,
+                    textStyle = TITLE_STYLE,
+                    cursorBrush = SolidColor(Color.White),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                    modifier = Modifier.fillMaxWidth(),
+                    decorationBox = { inner ->
+                        Box(contentAlignment = Alignment.Center) {
+                            if (name.isEmpty()) {
+                                Text(stringResource(R.string.folder_name_hint), style = TITLE_STYLE.copy(color = Color.White.copy(alpha = 0.5f)))
+                            }
+                            inner()
                         }
-                        inner()
-                    }
-                },
-            )
-            LazyVerticalGrid(columns = GridCells.Fixed(4), modifier = Modifier.heightIn(max = 440.dp)) {
-                items(sorted, key = { it.first.key }) { (source, entry) ->
-                    Box(Modifier.height(100.dp), contentAlignment = Alignment.Center) {
-                        AppIcon(entry, content.actions, labels, Modifier.registerSource(state, Layer.FOLDER, source))
+                    },
+                )
+            }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(end = 21.dp, bottom = 8.dp)
+                    .graphicsLayer { alpha = progress.value.coerceIn(0f, 1f) },
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Box(
+                    Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .clickable { pickerOpen = true },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(Modifier.size(25.dp).border(1.5.dp, Color.White, CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(
+                            painterResource(R.drawable.ic_add),
+                            contentDescription = stringResource(R.string.folder_add_apps),
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp),
+                        )
                     }
                 }
-                item(key = "add") {
-                    Box(Modifier.height(100.dp), contentAlignment = Alignment.Center) {
-                        LauncherIcon(stringResource(R.string.folder_add_apps), labels, onClick = { pickerOpen = true }) { iconModifier ->
-                            Box(
-                                iconModifier
-                                    .clip(IconShape)
-                                    .border(1.5.dp, textColor.copy(alpha = 0.3f), IconShape),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(painterResource(R.drawable.ic_add), contentDescription = null, tint = textColor.copy(alpha = 0.7f))
+            }
+            val pages = remember(sorted) { sorted.chunked(FOLDER_COLUMNS * FOLDER_ROWS).ifEmpty { listOf(emptyList()) } }
+            val pagerState = rememberPagerState { pages.size }
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    // Measured before the layer below, so the bounds are not affected by its scale.
+                    .onGloballyPositioned { cardBounds = it.boundsInRoot() }
+                    .graphicsLayer {
+                        val p = progress.value
+                        val scale = FOLDER_START_SCALE + (1f - FOLDER_START_SCALE) * p
+                        scaleX = scale
+                        scaleY = scale
+                        alpha = p.coerceIn(0f, 1f)
+                        transformOrigin = if (origin != null && cardBounds.width > 0f) {
+                            TransformOrigin(
+                                ((origin.x - cardBounds.left) / cardBounds.width).coerceIn(0f, 1f),
+                                ((origin.y - cardBounds.top) / cardBounds.height).coerceIn(0f, 1f),
+                            )
+                        } else {
+                            TransformOrigin.Center
+                        }
+                    }
+                    .clip(RoundedCornerShape(34.dp))
+                    .background(cardColor)
+                    .tapToDismiss { focusManager.clearFocus() }
+                    .padding(start = 12.dp, end = 12.dp, top = 16.dp),
+            ) {
+                HorizontalPager(pagerState, Modifier.fillMaxWidth().height(FOLDER_CELL_HEIGHT * FOLDER_ROWS)) { page ->
+                    Column(Modifier.fillMaxSize()) {
+                        pages[page].chunked(FOLDER_COLUMNS).forEach { row ->
+                            Row(Modifier.fillMaxWidth().height(FOLDER_CELL_HEIGHT)) {
+                                row.forEach { (source, entry) ->
+                                    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                                        AppIcon(entry, content.actions, labels, Modifier.registerSource(state, Layer.FOLDER, source))
+                                    }
+                                }
+                                repeat(FOLDER_COLUMNS - row.size) { Spacer(Modifier.weight(1f)) }
                             }
                         }
                     }
                 }
+                Row(
+                    Modifier.fillMaxWidth().height(21.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (pages.size > 1) {
+                        repeat(pages.size) { page ->
+                            Box(
+                                Modifier
+                                    .padding(horizontal = 3.dp)
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(textColor.copy(alpha = if (page == pagerState.currentPage) 0.9f else 0.3f)),
+                            )
+                        }
+                    }
+                }
             }
+            Spacer(Modifier.height(50.dp))
         }
     }
 
@@ -225,6 +275,18 @@ fun FolderPanel(
 
 /** Folder card scale at the start of the opening animation (relative to its full size). */
 private const val FOLDER_START_SCALE = 0.15f
+
+// One UI folder grid: 3 × 4 apps per page in cells of about 94 × 99dp.
+private const val FOLDER_COLUMNS = 3
+private const val FOLDER_ROWS = 4
+private val FOLDER_CELL_HEIGHT = 99.dp
+private val TITLE_STYLE = TextStyle(
+    color = Color.White,
+    fontSize = 32.sp,
+    fontWeight = FontWeight.SemiBold,
+    textAlign = TextAlign.Center,
+    shadow = Shadow(color = Color(0x66000000), offset = Offset(0f, 2f), blurRadius = 6f),
+)
 
 /** Full-screen list of apps with checkboxes (folder content, hidden apps). */
 @Composable

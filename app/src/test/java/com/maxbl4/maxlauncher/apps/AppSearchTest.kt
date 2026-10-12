@@ -52,4 +52,11 @@ class AppSearchTest {
         // "ш" switches layout to "i", which must not match the "i" inside "Telegram"/"Music".
         assertEquals(emptyList<String>(), search("ш"))
     }
+
+    @Test
+    fun equalMatchesKeepTheirOrder() {
+        // The drawer lists personal apps before work ones; a match in both stays in that order.
+        val apps = listOf("IngoMobile" to "personal", "Gmail" to "personal", "IngoMobile" to "work")
+        assertEquals(listOf("personal", "work"), AppSearch.filter(apps, "ingo") { it.first }.map { it.second })
+    }
 }
