@@ -38,6 +38,9 @@ class MainActivity : ComponentActivity() {
         val transparent = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT)
         enableEdgeToEdge(statusBarStyle = transparent, navigationBarStyle = transparent)
         super.onCreate(savedInstanceState)
+        // No scrim behind the 3-button navigation bar: the wallpaper shows through, as on Samsung.
+        window.isNavigationBarContrastEnforced = false
+        window.isStatusBarContrastEnforced = false
         // The home activity must never finish on Back; screens register their own handlers on top.
         onBackPressedDispatcher.addCallback(this) {}
 

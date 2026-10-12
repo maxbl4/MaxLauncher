@@ -35,14 +35,14 @@ object AppSearch {
     internal fun normalize(s: String): String = s.lowercase(Locale.ROOT).replace('ё', 'е')
 
     internal fun variants(normalizedQuery: String): Set<String> {
-        val latin = toLatin(normalizedQuery)
-        return linkedSetOf(
-            normalizedQuery,
-            normalize(switchLayout(normalizedQuery)),
-            latin,
-            latin.replace("ks", "x"),
-            normalize(toCyrillic(normalizedQuery)),
-        ).filterTo(LinkedHashSet()) { it.isNotBlank() }
+        val switched = normalize(switchLayout(normalizedQuery))
+        // Wrong layout and a label in the other alphabet: "ntktuhfv" -> "телеграм" -> "telegram".
+        return linkedSetOf(normalizedQuery, switched)
+            .flatMap { q ->
+                val latin = toLatin(q)
+                listOf(q, latin, latin.replace("ks", "x"), normalize(toCyrillic(q)))
+            }
+            .filterTo(LinkedHashSet()) { it.isNotBlank() }
     }
 
     /** 0 = label starts with the query, 1 = a word starts with it, 2 = substring, null = no match. */

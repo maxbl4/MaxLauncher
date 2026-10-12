@@ -33,6 +33,14 @@ class AppSearchTest {
     }
 
     @Test
+    fun wrongLayoutAndOtherAlphabet() {
+        // "телегр" typed on the English layout, while the label is Latin.
+        assertEquals(listOf("Telegram"), search("ntktuh"))
+        // "yandex" typed on the Russian layout.
+        assertEquals(listOf("Яндекс Go", "Yandex Music"), search("нфтвуч"))
+    }
+
+    @Test
     fun transliteration() {
         assertEquals(listOf("Telegram"), search("телеграм"))
         assertEquals(listOf("Яндекс Go", "Yandex Music"), search("яндекс"))
