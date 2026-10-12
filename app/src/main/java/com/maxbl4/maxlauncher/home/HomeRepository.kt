@@ -71,6 +71,17 @@ class HomeRepository(
         old.widgets().map { it.appWidgetId }.filterNot { it in kept }.forEach(widgets::delete)
     }
 
+    /** Replaces the whole layout (import); the current one is kept in [BACKUP_FILE]. */
+    fun replace(layout: HomeLayout) {
+        val current = _layout.value ?: return
+        val text = json.encodeToString(current)
+        scope.launch(io) {
+            runCatching { File(context.filesDir, BACKUP_FILE).writeText(text) }
+                .onFailure { Log.e(TAG, "Backing up the home layout failed", it) }
+        }
+        update { layout }
+    }
+
     private fun save(layout: HomeLayout) {
         scope.launch(io) {
             val stream = file.startWrite()
@@ -130,8 +141,9 @@ class HomeRepository(
         )
     }
 
-    private companion object {
-        const val TAG = "HomeRepository"
+    companion object {
+        private const val TAG = "HomeRepository"
+        const val BACKUP_FILE = "home_layout.before-import.json"
     }
 }
 

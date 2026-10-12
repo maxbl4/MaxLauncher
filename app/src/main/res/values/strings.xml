@@ -44,6 +44,19 @@
     <string name="shortcut_added">Ярлык добавлен на главный экран</string>
     <string name="widget_added">Виджет добавлен на главный экран</string>
 
+    <string name="import_title">Импорт раскладки One UI</string>
+    <string name="import_bad_data">Не удалось прочитать раскладку для импорта</string>
+    <string name="import_summary">Страниц: %1$d, значков: %2$d, папок: %3$d, виджетов: %4$d</string>
+    <string name="import_ambiguous">Одинаковые названия — выберите приложение</string>
+    <string name="import_missing">Не установлены (будут пропущены)</string>
+    <string name="import_warning">Текущая раскладка главного экрана будет заменена. Копия сохранится в памяти лаунчера.</string>
+    <string name="import_confirm">Импортировать</string>
+    <string name="import_to_home">На главный экран</string>
+    <string name="import_done">Готово: страниц %1$d, элементов %2$d.</string>
+    <string name="import_report_missing">Пропущены (не установлены): %1$s</string>
+    <string name="import_report_widgets">Виджеты не добавлены, добавьте вручную: %1$s</string>
+    <string name="import_report_backup">Прежняя раскладка сохранена.</string>
+
     <string name="settings_title">Настройки</string>
     <string name="settings_home">Главный экран</string>
     <string name="settings_drawer">Меню приложений</string>

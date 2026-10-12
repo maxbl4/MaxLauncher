@@ -70,6 +70,15 @@
                 android:resource="@xml/lock_screen_service" />
         </service>
 
+        <!-- Started by tools/import-oneui.ps1; asks before changing anything. -->
+        <activity
+            android:name=".ImportActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:label="@string/import_title"
+            android:taskAffinity="com.maxbl4.maxlauncher.import"
+            android:theme="@style/Theme.MaxLauncher.Settings" />
+
         <activity
             android:name=".PinItemActivity"
             android:excludeFromRecents="true"

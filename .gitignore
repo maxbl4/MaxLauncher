@@ -22,3 +22,6 @@ Thumbs.db
 *.keystore
 *.jks
 keystore.properties
+
+# Layout read from the phone by tools/import-oneui.ps1 (personal data)
+tools/oneui-layout.json
