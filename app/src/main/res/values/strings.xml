@@ -75,6 +75,17 @@
     <string name="settings_none">Нет</string>
     <string name="settings_double_tap_lock">Двойной тап — выключить экран</string>
     <string name="settings_lock_service_needed">Включите службу MaxLauncher в «Специальных возможностях»</string>
+    <string name="settings_backup">Резервная копия</string>
+    <string name="settings_export">Экспорт в файл</string>
+    <string name="settings_export_summary">Раскладка главного экрана, папки меню приложений и настройки</string>
+    <string name="settings_import">Импорт из файла</string>
+    <string name="backup_saved">Сохранено в файл</string>
+    <string name="backup_save_failed">Не удалось сохранить файл</string>
+    <string name="backup_bad_file">Это не файл настроек MaxLauncher</string>
+    <string name="backup_confirm_title">Восстановить из файла?</string>
+    <string name="backup_confirm_text">Страниц: %1$d, элементов: %2$d, виджетов: %3$d, папок в меню: %4$d.\n\nТекущая раскладка, папки меню и настройки будут заменены. Виджеты, которых нет на этом телефоне, создаются заново; у некоторых откроется их настройка.</string>
+    <string name="backup_restore">Восстановить</string>
+    <string name="backup_done">Настройки восстановлены.</string>
     <string name="settings_version">Версия %1$s</string>
 
     <string name="lock_service_label">MaxLauncher: выключение экрана</string>

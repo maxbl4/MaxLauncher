@@ -1,6 +1,5 @@
 package com.maxbl4.maxlauncher
 
-import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
 import android.content.Intent
 import android.os.Build
@@ -8,10 +7,8 @@ import android.os.Bundle
 import android.os.Process
 import android.util.Base64
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,7 +48,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.maxbl4.maxlauncher.apps.AppEntry
+import com.maxbl4.maxlauncher.drawer.DrawerLayout
 import com.maxbl4.maxlauncher.home.AppRef
+import com.maxbl4.maxlauncher.home.HomeLayout
 import com.maxbl4.maxlauncher.home.ImportedLayout
 import com.maxbl4.maxlauncher.home.PendingWidget
 import com.maxbl4.maxlauncher.home.ShortcutTarget
@@ -72,26 +71,17 @@ import kotlin.math.abs
  * with the layout as Base64 JSON in [EXTRA_DATA]: home pages, dock and apps screen folders.
  *
  * Nothing changes until the user confirms; apps with the same label are chosen by the user, and
- * the current home layout and drawer folders are backed up. Widgets are added one by one after
- * that, going through the "allow widget" and widget setup screens where needed.
+ * the current home layout and drawer folders are backed up. Widgets are created on the new layout
+ * first (see [WidgetBindingActivity]); it replaces the current one once they are all handled.
  */
-class ImportActivity : ComponentActivity() {
-
-    private val app get() = application as LauncherApplication
+class ImportActivity : WidgetBindingActivity() {
 
     /** Report lines; null until the import ran. Shown once all widgets are handled. */
     private var report by mutableStateOf<List<String>?>(null)
-    private var addingWidgets by mutableStateOf(false)
+    private var pending: Pending? = null
 
-    private val widgetQueue = ArrayDeque<PendingWidget>()
-    private val skippedWidgets = mutableListOf<String>()
-    private var current: Triple<PendingWidget, Int, AppWidgetProviderInfo>? = null
-    private var reportHead: List<String> = emptyList()
-
-    private val bindWidget = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val (widget, id, _) = current ?: return@registerForActivityResult
-        if (result.resultCode == RESULT_OK) configureOrPlace() else skipCurrent(widget, id, R.string.import_widget_not_allowed)
-    }
+    /** The import result, applied once all widgets are handled. */
+    private class Pending(var layout: HomeLayout, val drawer: DrawerLayout?, val head: List<String>)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -131,7 +121,7 @@ class ImportActivity : ComponentActivity() {
             val found = shortcuts
             when {
                 done != null -> Result(done, Modifier.weight(1f))
-                addingWidgets || apps.isEmpty() || found == null -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                creatingWidgets || apps.isEmpty() || found == null -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
                 else -> Confirm(imported, apps, found, Modifier.weight(1f))
@@ -258,93 +248,39 @@ class ImportActivity : ComponentActivity() {
 
     // --- Import ---
 
+    /** Builds the layout, creates the widgets on it and only then replaces the current one. */
     private fun runImport(imported: ImportedLayout, choices: Map<String, AppRef?>, shortcuts: Map<String, ShortcutTarget>) {
         val result = imported.toHomeLayout({ choices[it] }, { shortcuts[it] })
-        app.homeRepository.replace(result.layout)
+        val drawer = if (imported.drawerFolders.isNotEmpty()) imported.toDrawerLayout { choices[it] } else null
+        val (found, notFound) = result.widgets.map { it to findProvider(it) }.partition { it.second != null }
+        val head = buildList {
+            if (drawer != null) add(getString(R.string.import_report_drawer, drawer.folders.size))
+            if (result.missing.isNotEmpty()) add(getString(R.string.import_report_missing, result.missing.joinToString(", ")))
+            notFound.forEach { add(getString(R.string.import_widget_not_found, it.first.label)) }
+        }
+        pending = Pending(result.layout, drawer, head)
+        createWidgets(found.map { it.first to it.second!! })
+    }
 
-        val drawer = imported.toDrawerLayout { choices[it] }
-        if (imported.drawerFolders.isNotEmpty()) {
+    override fun onWidgetCreated(widget: PendingWidget, appWidgetId: Int, provider: AppWidgetProviderInfo) {
+        val p = pending ?: return
+        p.layout = p.layout.addWidget(
+            appWidgetId, provider.provider.flattenToString(), app.widgets.userSerial(provider),
+            widget.spanX, widget.spanY, widget.pageId, widget.x to widget.y,
+        )
+    }
+
+    override fun onWidgetsDone(skipped: List<String>) {
+        val p = pending ?: return
+        pending = null
+        app.homeRepository.replace(p.layout)
+        if (p.drawer != null) {
             val previous = JsonFileStore.JSON.encodeToString(app.drawer.value.value)
             runCatching { File(filesDir, DRAWER_BACKUP_FILE).writeText(previous) }
-            app.drawer.update { drawer }
+            app.drawer.update { p.drawer }
         }
-
-        reportHead = buildList {
-            add(getString(R.string.import_done, result.layout.pages.size, result.layout.allPlaced().size))
-            if (imported.drawerFolders.isNotEmpty()) add(getString(R.string.import_report_drawer, drawer.folders.size))
-            if (result.missing.isNotEmpty()) add(getString(R.string.import_report_missing, result.missing.joinToString(", ")))
-        }
-        widgetQueue.addAll(result.widgets)
-        addingWidgets = true
-        nextWidget()
-    }
-
-    // --- Widgets, one at a time ---
-
-    private fun nextWidget() {
-        val widget = widgetQueue.removeFirstOrNull() ?: return finishWidgets()
-        val provider = findProvider(widget)
-        if (provider == null) {
-            skippedWidgets += getString(R.string.import_widget_not_found, widget.label)
-            return nextWidget()
-        }
-        val id = app.widgets.allocateId()
-        current = Triple(widget, id, provider)
-        if (app.widgets.bindIfAllowed(id, provider)) {
-            configureOrPlace()
-        } else {
-            bindWidget.launch(
-                Intent(AppWidgetManager.ACTION_APPWIDGET_BIND)
-                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
-                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider.provider)
-                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, provider.profile),
-            )
-        }
-    }
-
-    private fun configureOrPlace() {
-        val (widget, id, provider) = current ?: return
-        val optional = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
-            provider.widgetFeatures and AppWidgetProviderInfo.WIDGET_FEATURE_CONFIGURATION_OPTIONAL != 0
-        if (provider.configure != null && !optional) {
-            try {
-                app.widgets.host.startAppWidgetConfigureActivityForResult(this, id, 0, REQUEST_CONFIGURE, null)
-            } catch (e: Exception) {
-                skipCurrent(widget, id, R.string.import_widget_setup_failed)
-            }
-            return
-        }
-        placeCurrent()
-    }
-
-    @Deprecated("AppWidgetHost reports the configuration result through onActivityResult")
-    @Suppress("DEPRECATION")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_CONFIGURE) return
-        val (widget, id, _) = current ?: return
-        if (resultCode == RESULT_OK) placeCurrent() else skipCurrent(widget, id, R.string.import_widget_setup_cancelled)
-    }
-
-    private fun placeCurrent() {
-        val (widget, id, provider) = current ?: return
-        current = null
-        app.homeRepository.update {
-            it.addWidget(id, provider.provider.flattenToString(), app.widgets.userSerial(provider), widget.spanX, widget.spanY, widget.pageId, widget.x to widget.y)
-        }
-        nextWidget()
-    }
-
-    private fun skipCurrent(widget: PendingWidget, id: Int, reason: Int) {
-        current = null
-        app.widgets.delete(id)
-        skippedWidgets += getString(reason, widget.label)
-        nextWidget()
-    }
-
-    private fun finishWidgets() {
-        addingWidgets = false
-        report = reportHead + skippedWidgets + getString(R.string.import_report_backup)
+        report = listOf(getString(R.string.import_done, p.layout.pages.size, p.layout.allPlaced().size)) +
+            p.head + skipped + getString(R.string.import_report_backup)
     }
 
     /**
@@ -375,7 +311,6 @@ class ImportActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_DATA = "data"
-        private const val REQUEST_CONFIGURE = 21
         private const val DRAWER_BACKUP_FILE = "drawer.before-import.json"
     }
 }

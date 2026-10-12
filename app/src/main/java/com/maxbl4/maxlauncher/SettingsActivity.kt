@@ -1,11 +1,15 @@
 package com.maxbl4.maxlauncher
 
+import android.appwidget.AppWidgetProviderInfo
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.os.Process
 import android.provider.Settings
-import androidx.activity.ComponentActivity
+import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
@@ -43,30 +47,187 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import com.maxbl4.maxlauncher.backup.LauncherBackup
+import com.maxbl4.maxlauncher.backup.RestorePlan
+import com.maxbl4.maxlauncher.backup.toRestorePlan
+import com.maxbl4.maxlauncher.home.HomeLayout
+import com.maxbl4.maxlauncher.home.PendingWidget
+import com.maxbl4.maxlauncher.home.addWidget
+import com.maxbl4.maxlauncher.home.allPlaced
 import com.maxbl4.maxlauncher.home.resizeGrid
+import com.maxbl4.maxlauncher.home.widgets
 import com.maxbl4.maxlauncher.settings.DRAWER_GRIDS
 import com.maxbl4.maxlauncher.settings.HOME_GRIDS
+import com.maxbl4.maxlauncher.settings.JsonFileStore
 import com.maxbl4.maxlauncher.ui.AppChecklist
 import com.maxbl4.maxlauncher.ui.LauncherTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import java.io.File
+import java.time.LocalDate
 
-/** Launcher settings, opened from the edit mode bar. */
-class SettingsActivity : ComponentActivity() {
+/** Launcher settings, opened from the edit mode bar. Also saves everything to a file and restores it. */
+class SettingsActivity : WidgetBindingActivity() {
+
+    /** A file read and waiting for the user's confirmation. */
+    private var confirm by mutableStateOf<LauncherBackup?>(null)
+    /** Lines shown after a restore. */
+    private var report by mutableStateOf<List<String>?>(null)
+    private var restoring: Restoring? = null
+
+    private class Restoring(var layout: HomeLayout, val plan: RestorePlan, val head: List<String>)
+
+    private val exportFile = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) export(uri)
+    }
+    private val importFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) read(uri)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        val app = application as LauncherApplication
         setContent {
             LauncherTheme {
                 Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxSize()) {
-                    SettingsScreen(app)
+                    SettingsScreen(
+                        app,
+                        onExport = { exportFile.launch("MaxLauncher-${LocalDate.now()}.json") },
+                        onImport = { importFile.launch(arrayOf("*/*")) },
+                    )
+                    confirm?.let { backup -> ConfirmRestore(backup) }
+                    report?.let { lines -> RestoreReport(lines) }
                 }
             }
         }
     }
+
+    @Composable
+    private fun ConfirmRestore(backup: LauncherBackup) {
+        AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text(stringResource(R.string.backup_confirm_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.backup_confirm_text,
+                        backup.home.pages.size,
+                        backup.home.allPlaced().size,
+                        backup.home.widgets().size,
+                        backup.drawer.folders.size,
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = null
+                    restore(backup)
+                }) { Text(stringResource(R.string.backup_restore)) }
+            },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text(stringResource(R.string.picker_cancel)) } },
+        )
+    }
+
+    @Composable
+    private fun RestoreReport(lines: List<String>) {
+        AlertDialog(
+            onDismissRequest = { report = null },
+            text = { Text(lines.joinToString("\n\n")) },
+            confirmButton = { TextButton(onClick = { report = null }) { Text(stringResource(android.R.string.ok)) } },
+        )
+    }
+
+    private fun export(uri: Uri) {
+        val home = app.homeRepository.layout.value ?: return
+        val backup = LauncherBackup(home = home, drawer = app.drawer.value.value, settings = app.settings.value.value)
+        lifecycleScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                runCatching {
+                    contentResolver.openOutputStream(uri, "wt")!!.use { it.write(EXPORT_JSON.encodeToString(backup).toByteArray()) }
+                }.isSuccess
+            }
+            Toast.makeText(this@SettingsActivity, if (saved) R.string.backup_saved else R.string.backup_save_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun read(uri: Uri) {
+        lifecycleScope.launch {
+            val backup = withContext(Dispatchers.IO) {
+                runCatching {
+                    val text = contentResolver.openInputStream(uri)!!.use { String(it.readBytes()) }
+                    JsonFileStore.JSON.decodeFromString<LauncherBackup>(text).takeIf { it.format <= LauncherBackup.FORMAT }
+                }.getOrNull()
+            }
+            if (backup == null) {
+                Toast.makeText(this@SettingsActivity, R.string.backup_bad_file, Toast.LENGTH_LONG).show()
+            } else {
+                confirm = backup
+            }
+        }
+    }
+
+    /** Creates the widgets that are missing on this phone, then replaces everything at once. */
+    private fun restore(backup: LauncherBackup) {
+        val current = app.homeRepository.layout.value ?: return
+        val previous = LauncherBackup(home = current, drawer = app.drawer.value.value, settings = app.settings.value.value)
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { File(filesDir, BEFORE_RESTORE_FILE).writeText(JsonFileStore.JSON.encodeToString(previous)) }
+        }
+
+        val apps = app.appRepository.apps.value
+        val refs = apps.map { it.ref }.toSet()
+        val packages = refs.map { it.component.substringBefore('/') to it.userSerial }.toSet()
+        val plan = backup.toRestorePlan(
+            isInstalled = { it in refs },
+            isPackageInstalled = { pkg, serial -> (pkg to serial) in packages },
+            isWidgetBound = { item -> runCatching { app.widgets.info(item.appWidgetId)?.provider?.flattenToString() == item.provider }.getOrDefault(false) },
+        )
+
+        val me = Process.myUserHandle()
+        val providers = app.widgets.providers().sortedBy { it.profile != me }
+        val found = mutableListOf<Pair<PendingWidget, AppWidgetProviderInfo>>()
+        val head = mutableListOf(getString(R.string.backup_done))
+        if (plan.missingPackages.isNotEmpty()) head += getString(R.string.import_report_missing, plan.missingPackages.joinToString(", "))
+        for (widget in plan.widgets) {
+            val provider = providers.firstOrNull { it.provider.flattenToString() == widget.label }
+            if (provider == null) {
+                head += getString(R.string.import_widget_not_found, widget.label.substringBefore('/'))
+            } else {
+                found += widget.copy(label = provider.loadLabel(packageManager)) to provider
+            }
+        }
+        restoring = Restoring(plan.home, plan, head)
+        createWidgets(found)
+    }
+
+    override fun onWidgetCreated(widget: PendingWidget, appWidgetId: Int, provider: AppWidgetProviderInfo) {
+        val r = restoring ?: return
+        r.layout = r.layout.addWidget(
+            appWidgetId, provider.provider.flattenToString(), app.widgets.userSerial(provider),
+            widget.spanX, widget.spanY, widget.pageId, widget.x to widget.y,
+        )
+    }
+
+    override fun onWidgetsDone(skipped: List<String>) {
+        val r = restoring ?: return
+        restoring = null
+        app.homeRepository.replace(r.layout)
+        app.drawer.update { r.plan.drawer }
+        app.settings.update { r.plan.settings }
+        report = r.head + skipped
+    }
+
+    private companion object {
+        const val BEFORE_RESTORE_FILE = "before-restore.json"
+        val EXPORT_JSON = Json(JsonFileStore.JSON) { prettyPrint = true }
+    }
 }
 
 @Composable
-private fun SettingsScreen(app: LauncherApplication) {
+private fun SettingsScreen(app: LauncherApplication, onExport: () -> Unit, onImport: () -> Unit) {
     val context = LocalContext.current
     val settings by app.settings.value.collectAsStateWithLifecycle()
     val layout by app.homeRepository.layout.collectAsStateWithLifecycle()
@@ -126,6 +287,10 @@ private fun SettingsScreen(app: LauncherApplication) {
             app.settings.update { it.copy(doubleTapToLock = checked) }
             if (checked && !lockServiceEnabled) lockServiceDialog = true
         }
+
+        Section(stringResource(R.string.settings_backup))
+        ValueRow(stringResource(R.string.settings_export), stringResource(R.string.settings_export_summary), onExport)
+        ValueRow(stringResource(R.string.settings_import), null, onImport)
 
         HorizontalDivider(Modifier.padding(top = 16.dp))
         Text(
@@ -188,7 +353,7 @@ private fun Section(title: String) {
 }
 
 @Composable
-private fun ValueRow(title: String, value: String, onClick: () -> Unit) {
+private fun ValueRow(title: String, value: String?, onClick: () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -196,7 +361,7 @@ private fun ValueRow(title: String, value: String, onClick: () -> Unit) {
             .padding(horizontal = 24.dp, vertical = 14.dp),
     ) {
         Text(title, fontSize = 17.sp)
-        Text(value, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+        if (value != null) Text(value, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
     }
 }
 
