@@ -37,7 +37,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
 import com.maxbl4.maxlauncher.apps.AppEntry
 
-val ICON_SIZE = 56.dp
+/** Matches One UI Home icons on a 4-column grid. */
+val ICON_SIZE = 63.dp
 
 /** How icon labels look: dark text on light wallpapers / the light drawer, white with a shadow otherwise. */
 data class LabelStyle(val color: Color, val shadow: Boolean)
@@ -69,7 +70,7 @@ fun LauncherIcon(
                 .size(iconSize)
                 .onGloballyPositioned { iconBounds = it.boundsInRoot() },
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(4.dp))
         Text(
             text = label,
             color = labelStyle.color,
@@ -97,19 +98,23 @@ fun AppIcon(entry: AppEntry, actions: AppActions, labelStyle: LabelStyle, modifi
 fun FolderIcon(apps: List<ImageBitmap>, modifier: Modifier = Modifier, background: Color = HOME_FOLDER_LIGHT) {
     val grid = if (apps.size <= 4) 2 else 3
     val shown = apps.take(grid * grid)
+    // Previews scale with the icon: the folder is always ICON_SIZE.
+    val padding = ICON_SIZE * if (grid == 2) 0.16f else 0.125f
+    val gap = 3.dp
+    val cellSize = (ICON_SIZE - padding * 2 - gap * (grid - 1)) / grid
     Box(
         modifier
             .clip(RoundedCornerShape(30))
             .background(background)
-            .padding(if (grid == 2) 9.dp else 7.dp),
+            .padding(padding),
         contentAlignment = Alignment.Center,
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(gap)) {
             for (row in 0 until grid) {
-                Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
                     for (column in 0 until grid) {
                         val bitmap = shown.getOrNull(row * grid + column)
-                        val cell = Modifier.size(if (grid == 2) 17.dp else 12.dp)
+                        val cell = Modifier.size(cellSize)
                         if (bitmap != null) Image(bitmap, contentDescription = null, modifier = cell) else Spacer(cell)
                     }
                 }
