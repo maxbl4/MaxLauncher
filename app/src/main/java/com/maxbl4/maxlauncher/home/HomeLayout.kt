@@ -32,8 +32,24 @@ data class ShortcutItem(
     val label: String,
 ) : HomeItem
 
+/** An app widget; [appWidgetId] is allocated from the launcher's AppWidgetHost. */
 @Serializable
-data class Placed(val item: HomeItem, val x: Int, val y: Int)
+@SerialName("widget")
+data class WidgetItem(
+    override val id: Long,
+    val appWidgetId: Int,
+    val provider: String,
+    val userSerial: Long,
+) : HomeItem
+
+/** An item on a grid. Icons take one cell; widgets span [spanX] × [spanY] cells from (x, y). */
+@Serializable
+data class Placed(val item: HomeItem, val x: Int, val y: Int, val spanX: Int = 1, val spanY: Int = 1) {
+    fun covers(cx: Int, cy: Int): Boolean = cx in x until x + spanX && cy in y until y + spanY
+
+    fun overlaps(ox: Int, oy: Int, w: Int, h: Int): Boolean =
+        ox < x + spanX && x < ox + w && oy < y + spanY && y < oy + h
+}
 
 @Serializable
 data class HomePage(val id: Long, val items: List<Placed> = emptyList())
@@ -79,7 +95,14 @@ data class HomeLayout(
         Container.Dock -> copy(dock = items)
     }
 
-    fun itemAt(container: Container, x: Int, y: Int): Placed? = items(container).firstOrNull { it.x == x && it.y == y }
+    fun itemAt(container: Container, x: Int, y: Int): Placed? = items(container).firstOrNull { it.covers(x, y) }
+
+    /** Whether a [w] × [h] area at (x, y) is inside the grid and free, ignoring item [ignoreId]. */
+    fun isAreaFree(container: Container, x: Int, y: Int, w: Int, h: Int, ignoreId: Long? = null): Boolean {
+        val (columns, rows) = size(container)
+        if (x < 0 || y < 0 || x + w > columns || y + h > rows) return false
+        return items(container).none { it.item.id != ignoreId && it.overlaps(x, y, w, h) }
+    }
 
     /** A top-level item (not inside a folder) and its container. */
     fun findPlaced(itemId: Long): Pair<Container, Placed>? {

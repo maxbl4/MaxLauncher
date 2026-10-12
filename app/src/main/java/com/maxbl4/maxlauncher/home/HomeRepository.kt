@@ -11,6 +11,7 @@ import android.util.AtomicFile
 import android.util.Log
 import com.maxbl4.maxlauncher.apps.AppEntry
 import com.maxbl4.maxlauncher.apps.AppRepository
+import com.maxbl4.maxlauncher.widgets.WidgetHostManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,7 +29,11 @@ import java.io.File
  * back. The first start gets one page and a dock with the default phone, messages, browser and
  * camera apps.
  */
-class HomeRepository(private val context: Context, private val appRepository: AppRepository) {
+class HomeRepository(
+    private val context: Context,
+    private val appRepository: AppRepository,
+    private val widgets: WidgetHostManager,
+) {
 
     private val file = AtomicFile(File(context.filesDir, "home_layout.json"))
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -61,6 +66,9 @@ class HomeRepository(private val context: Context, private val appRepository: Ap
         _layout.value = new
         save(new)
         syncPinnedShortcuts(old, new)
+        // Widgets taken off the home screen give their ids back to the host.
+        val kept = new.widgets().map { it.appWidgetId }.toSet()
+        old.widgets().map { it.appWidgetId }.filterNot { it in kept }.forEach(widgets::delete)
     }
 
     private fun save(layout: HomeLayout) {
@@ -137,10 +145,12 @@ fun HomeLayout.removePackage(packageName: String, userSerial: Long): HomeLayout 
             when (val item = p.item) {
                 is AppItem -> listOf(item.app)
                 is FolderItem -> item.apps.map { it.app }
-                is ShortcutItem -> emptyList()
+                else -> emptyList()
             }
         }
         .filter { it.userSerial == userSerial && it.component.substringBefore('/') == packageName }
         .distinct()
-    return refs.fold(this) { layout, ref -> layout.removeApp(ref) }.removeShortcutsOf(packageName, userSerial)
+    return refs.fold(this) { layout, ref -> layout.removeApp(ref) }
+        .removeShortcutsOf(packageName, userSerial)
+        .removeWidgetsOf(packageName, userSerial)
 }

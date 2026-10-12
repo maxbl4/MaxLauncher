@@ -7,11 +7,14 @@ import android.os.Looper
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -22,8 +25,10 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -33,30 +38,46 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.maxbl4.maxlauncher.apps.AppRepository
+import com.maxbl4.maxlauncher.LauncherApplication
+import com.maxbl4.maxlauncher.apps.AppEntry
 import com.maxbl4.maxlauncher.apps.AppShortcut
+import com.maxbl4.maxlauncher.drawer.DrawerLayout
+import com.maxbl4.maxlauncher.drawer.buildDrawerEntries
 import com.maxbl4.maxlauncher.home.AppItem
 import com.maxbl4.maxlauncher.home.FolderItem
 import com.maxbl4.maxlauncher.home.HomeLayout
-import com.maxbl4.maxlauncher.home.HomeRepository
 import com.maxbl4.maxlauncher.home.ShortcutItem
+import com.maxbl4.maxlauncher.home.WidgetItem
 import com.maxbl4.maxlauncher.home.drop
 import com.maxbl4.maxlauncher.home.move
 import com.maxbl4.maxlauncher.home.remove
+import com.maxbl4.maxlauncher.home.renameFolder
+import com.maxbl4.maxlauncher.home.setFolderApps
 import kotlinx.coroutines.flow.Flow
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 @Composable
-fun LauncherScreen(appRepository: AppRepository, homeRepository: HomeRepository, homePresses: Flow<Unit>) {
+fun LauncherScreen(
+    app: LauncherApplication,
+    homePresses: Flow<Unit>,
+    onAddWidget: (WidgetOption, pageId: Long) -> Unit,
+    onLockScreen: () -> Unit,
+) {
+    val appRepository = app.appRepository
+    val homeRepository = app.homeRepository
     val apps by appRepository.apps.collectAsStateWithLifecycle()
+    val workPaused by appRepository.workPaused.collectAsStateWithLifecycle()
     val layout by homeRepository.layout.collectAsStateWithLifecycle()
-    // Work profile apps will get their own tab (docs/FEATURES.md, item 24).
-    val personalApps = remember(apps) { apps.filter { !it.isWork } }
+    val settings by app.settings.value.collectAsStateWithLifecycle()
+    val drawerLayout by app.drawer.value.collectAsStateWithLifecycle()
+
     val appsByRef = remember(apps) { apps.associateBy { it.ref } }
     val shortcutItems = remember(layout) { layout?.shortcutItems().orEmpty() }
     val shortcuts by produceState(emptyMap<Long, AppShortcut>(), shortcutItems) {
@@ -70,18 +91,42 @@ fun LauncherScreen(appRepository: AppRepository, homeRepository: HomeRepository,
     val darkTheme = isSystemInDarkTheme()
     val wallpaperDarkText = rememberWallpaperSupportsDarkText()
     val homeLabels = if (wallpaperDarkText) LabelStyle(Color(0xFF1A1A1A), shadow = false) else LabelStyle(Color.White, shadow = true)
-    val content = HomeContent(state, actions, appsByRef, shortcuts, homeLabels, darkTheme)
+    val content = HomeContent(state, actions, appsByRef, shortcuts, homeLabels, darkTheme, app.widgets)
+
+    val drawerContent = remember(apps, drawerLayout, settings, workPaused) {
+        val hidden = settings.hiddenApps
+        val personal = apps.filter { !it.isWork }
+        val work = apps.filter { it.isWork && it.ref !in hidden }
+        DrawerContent(
+            entries = buildDrawerEntries(personal, drawerLayout, hidden, { it.ref }, { it.label }, { it.title }),
+            searchable = personal.filter { it.ref !in hidden },
+            workApps = work,
+            hasWorkProfile = appRepository.hasWorkProfile(),
+            workPaused = workPaused,
+            onUnpauseWork = appRepository::unpauseWork,
+            columns = settings.drawerColumns,
+            rows = settings.drawerRows,
+        )
+    }
 
     SideEffect {
-        state.onDrop = { source, target -> homeRepository.update { it.applyDrop(source, target) } }
+        state.layoutLocked = settings.lockLayout
+        state.doubleTapToLock = settings.doubleTapToLock
+        state.onDoubleTap = onLockScreen
+        state.onDrop = { source, target -> applyDrop(app, source, target) }
     }
     LaunchedEffect(homePresses) { homePresses.collect { state.closeTopmost() } }
     // Coming back to the launcher from an app always lands on the plain home screen.
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { state.reset() }
-    BackHandler(enabled = state.menu != null || state.openFolderId != null || state.drawer.isOpen || state.editMode) {
+    BackHandler(
+        enabled = state.menu != null || state.openFolderId != null || state.openDrawerFolderId != null ||
+            state.drawer.isOpen || state.editMode || state.resizingWidgetId != null || state.widgetPickerOpen,
+    ) {
         state.closeTopmost()
     }
-    SystemBarsAppearance(darkIcons = if (state.drawer.isOpen || state.openFolderId != null) !darkTheme else wallpaperDarkText)
+    val overlayOpen = state.drawer.isOpen || state.openFolderId != null || state.widgetPickerOpen
+    SystemBarsAppearance(darkIcons = if (overlayOpen) !darkTheme else wallpaperDarkText)
+    BackgroundBlur(state)
 
     Box(
         Modifier
@@ -89,6 +134,9 @@ fun LauncherScreen(appRepository: AppRepository, homeRepository: HomeRepository,
             .onSizeChanged { state.rootSize = it.toSize() }
             .pointerInput(state) { launcherGestures(state, haptics) },
     ) {
+        if (settings.dimWallpaperInDark && darkTheme) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = WALLPAPER_DIM)))
+        }
         val currentLayout = layout
         if (currentLayout != null) {
             HomeScreen(
@@ -103,44 +151,111 @@ fun LauncherScreen(appRepository: AppRepository, homeRepository: HomeRepository,
                 },
             )
         }
-        if (state.drawer.isVisible) {
-            AppDrawer(personalApps, state, actions)
-        }
-        val folder = state.openFolderId?.let { currentLayout?.findFolder(it) }
-        if (folder != null) {
-            FolderOverlay(folder, personalApps, content, homeRepository)
-        } else if (state.openFolderId != null && currentLayout != null) {
-            // The folder disappeared (e.g. its last apps were removed).
-            LaunchedEffect(Unit) { state.openFolderId = null }
+        AppDrawer(drawerContent, content)
+
+        HomeFolder(state, currentLayout, content, app, drawerContent)
+        DrawerFolder(state, drawerLayout, content, app, drawerContent)
+
+        if (state.widgetPickerOpen && currentLayout != null) {
+            WidgetPicker(
+                widgets = app.widgets,
+                cell = state.homeCellSize() ?: Size.Zero,
+                columns = currentLayout.columns,
+                rows = currentLayout.rows,
+                dark = darkTheme,
+                onPick = { option ->
+                    state.widgetPickerOpen = false
+                    state.editMode = false
+                    onAddWidget(option, state.currentHomePageId ?: currentLayout.homePageId)
+                },
+                onClose = { state.widgetPickerOpen = false },
+            )
         }
         state.menu?.let { request ->
-            ItemMenu(request, actions, homeRepository, appsByRef, onDismiss = { state.menu = null })
+            ItemMenu(request, content, homeRepository, app.drawer, onDismiss = { state.menu = null })
         }
         state.drag?.let { drag -> DragOverlay(drag, content) }
     }
 }
 
-/** Applies a finished drag to the layout. */
-private fun HomeLayout.applyDrop(source: DragSource, target: DropTarget): HomeLayout = when (target) {
-    DropTarget.Remove -> when (source) {
-        is DragSource.HomeEntry -> remove(source.item.id)
-        is DragSource.FolderEntry -> remove(source.item.id)
-        is DragSource.DrawerApp -> this
+@Composable
+private fun HomeFolder(state: LauncherState, layout: HomeLayout?, content: HomeContent, app: LauncherApplication, drawerContent: DrawerContent) {
+    val id = state.openFolderId ?: return
+    val folder = layout?.findFolder(id)
+    if (folder == null) {
+        // The folder disappeared (e.g. its last apps were removed).
+        if (layout != null) LaunchedEffect(Unit) { state.openFolderId = null }
+        return
     }
-    is DropTarget.Cell -> when (source) {
-        is DragSource.DrawerApp -> {
-            val (id, layout) = allocateId()
-            layout.drop(AppItem(id, source.entry.ref), target.container, target.x, target.y) ?: this
+    val apps = folder.apps.mapNotNull { item -> content.appsByRef[item.app]?.let { DragSource.FolderEntry(folder.id, item) to it } }
+    FolderPanel(
+        folderId = folder.id,
+        title = folder.title,
+        apps = apps,
+        pickerApps = drawerContent.searchable,
+        content = content,
+        onRename = { title -> app.homeRepository.update { it.renameFolder(folder.id, title) } },
+        onPicked = { refs -> app.homeRepository.update { it.setFolderApps(folder.id, refs) } },
+        onDismiss = { state.openFolderId = null },
+    )
+}
+
+@Composable
+private fun DrawerFolder(state: LauncherState, layout: DrawerLayout, content: HomeContent, app: LauncherApplication, drawerContent: DrawerContent) {
+    val id = state.openDrawerFolderId ?: return
+    val folder = layout.folder(id)
+    if (folder == null) {
+        LaunchedEffect(Unit) { state.openDrawerFolderId = null }
+        return
+    }
+    val visible = drawerContent.searchable.associateBy { it.ref }
+    val apps = folder.apps.mapNotNull { ref -> visible[ref]?.let { DragSource.DrawerFolderApp(folder.id, it) to it } }
+    FolderPanel(
+        folderId = folder.id,
+        title = folder.title,
+        apps = apps,
+        pickerApps = drawerContent.searchable,
+        content = content,
+        onRename = { title -> app.drawer.update { it.rename(folder.id, title) } },
+        onPicked = { refs -> app.drawer.update { it.setApps(folder.id, refs) } },
+        onDismiss = { state.openDrawerFolderId = null },
+    )
+}
+
+/** Applies a finished drag: drawer folder edits or home layout edits. */
+private fun applyDrop(app: LauncherApplication, source: DragSource, target: DropTarget) {
+    val ref = when (source) {
+        is DragSource.DrawerApp -> source.entry.ref
+        is DragSource.DrawerFolderApp -> source.entry.ref
+        else -> null
+    }
+    when (target) {
+        is DropTarget.DrawerOnApp -> if (ref != null) app.drawer.update { it.merge(ref, target.entry.ref) }
+        is DropTarget.DrawerOnFolder -> if (ref != null) app.drawer.update { it.addToFolder(target.folderId, ref) }
+        DropTarget.DrawerEmpty -> if (source is DragSource.DrawerFolderApp) app.drawer.update { it.removeApp(source.entry.ref) }
+        DropTarget.Remove -> when (source) {
+            is DragSource.HomeEntry -> app.homeRepository.update { it.remove(source.item.id) }
+            is DragSource.FolderEntry -> app.homeRepository.update { it.remove(source.item.id) }
+            else -> Unit
         }
-        is DragSource.HomeEntry -> move(source.item.id, target.container, target.x, target.y)
-        is DragSource.FolderEntry -> move(source.item.id, target.container, target.x, target.y)
+        is DropTarget.Cell -> app.homeRepository.update { layout ->
+            when (source) {
+                is DragSource.DrawerApp, is DragSource.DrawerFolderApp -> {
+                    val (id, next) = layout.allocateId()
+                    next.drop(AppItem(id, ref!!), target.container, target.x, target.y) ?: layout
+                }
+                is DragSource.HomeEntry -> layout.move(source.item.id, target.container, target.x, target.y)
+                is DragSource.FolderEntry -> layout.move(source.item.id, target.container, target.x, target.y)
+                is DragSource.DrawerFolderEntry -> layout
+            }
+        }
     }
 }
 
 private fun HomeLayout.shortcutItems(): List<ShortcutItem> =
     (pages.flatMap { it.items } + dock).mapNotNull { it.item as? ShortcutItem }
 
-/** The icon following the finger during a drag. */
+/** The item following the finger during a drag. */
 @Composable
 private fun DragOverlay(drag: DragState, content: HomeContent) {
     val density = LocalDensity.current
@@ -156,14 +271,41 @@ private fun DragOverlay(drag: DragState, content: HomeContent) {
         contentAlignment = Alignment.Center,
     ) {
         val iconModifier = Modifier.size(ICON_SIZE)
+        fun icon(entry: AppEntry?): @Composable () -> Unit = { entry?.let { Image(it.icon, null, iconModifier) } }
         when (val source = drag.source) {
-            is DragSource.DrawerApp -> Image(source.entry.icon, null, iconModifier)
-            is DragSource.FolderEntry -> content.appsByRef[source.item.app]?.let { Image(it.icon, null, iconModifier) }
+            is DragSource.DrawerApp -> icon(source.entry)()
+            is DragSource.DrawerFolderApp -> icon(source.entry)()
+            is DragSource.DrawerFolderEntry -> FolderIcon(source.folder.apps.mapNotNull { content.appsByRef[it]?.icon }, iconModifier, drawerFolderBackground(content.darkTheme))
+            is DragSource.FolderEntry -> icon(content.appsByRef[source.item.app])()
             is DragSource.HomeEntry -> when (val item = source.item) {
-                is AppItem -> content.appsByRef[item.app]?.let { Image(it.icon, null, iconModifier) }
-                is FolderItem -> FolderIcon(folderIcons(item, content.appsByRef), iconModifier, content.darkTheme)
+                is AppItem -> icon(content.appsByRef[item.app])()
+                is FolderItem -> FolderIcon(folderIcons(item, content.appsByRef), iconModifier, homeFolderBackground(content.darkTheme))
                 is ShortcutItem -> content.shortcuts[item.id]?.icon?.let { Image(it, null, iconModifier) }
+                is WidgetItem -> Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.White.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
+                        .border(2.dp, Color.White, RoundedCornerShape(16.dp)),
+                )
             }
+        }
+    }
+}
+
+/**
+ * Blurs the wallpaper behind the window while the drawer or a folder is open (where the device
+ * supports cross-window blur; otherwise only the dimming scrim is visible).
+ */
+@Composable
+private fun BackgroundBlur(state: LauncherState) {
+    val activity = LocalActivity.current ?: return
+    val maxRadius = with(LocalDensity.current) { BLUR_RADIUS.toPx() }
+    LaunchedEffect(activity) {
+        snapshotFlow {
+            val folderOpen = state.openFolderId != null || state.openDrawerFolderId != null || state.widgetPickerOpen
+            max(state.drawer.progress.value, if (folderOpen) 1f else 0f)
+        }.collect { p ->
+            activity.window.setBackgroundBlurRadius((p.coerceIn(0f, 1f) * maxRadius).roundToInt())
         }
     }
 }
@@ -202,3 +344,5 @@ private fun rememberWallpaperSupportsDarkText(): Boolean {
 
 private const val HOME_SHRINK = 0.06f
 private const val DRAG_SCALE = 1.1f
+private const val WALLPAPER_DIM = 0.35f
+private val BLUR_RADIUS = 28.dp

@@ -4,14 +4,22 @@
     <string name="search_hint">Поиск</string>
     <string name="search_nothing_found">Ничего не найдено</string>
 
+    <string name="tab_personal">Личные</string>
+    <string name="tab_work">Рабочие</string>
+    <string name="work_paused">Рабочие приложения приостановлены</string>
+    <string name="work_unpause">Включить</string>
+
     <string name="menu_app_info">О приложении</string>
     <string name="menu_uninstall">Удалить</string>
     <string name="menu_add_to_home">Добавить на главный экран</string>
     <string name="menu_remove_from_home">Убрать с экрана</string>
     <string name="menu_remove_from_folder">Убрать из папки</string>
     <string name="menu_delete_folder">Удалить папку</string>
+    <string name="menu_resize">Изменить размер</string>
+    <string name="menu_layout_locked">Раскладка заблокирована</string>
 
     <string name="drop_remove">Убрать</string>
+    <string name="drop_to_home">На главный экран</string>
 
     <string name="folder_name_hint">Папка</string>
     <string name="folder_add_apps">Добавить</string>
@@ -20,13 +28,38 @@
     <string name="picker_cancel">Отмена</string>
 
     <string name="edit_wallpaper">Обои</string>
+    <string name="edit_widgets">Виджеты</string>
+    <string name="edit_settings">Настройки</string>
     <string name="edit_home_page">Сделать главной</string>
     <string name="edit_delete_page">Удалить страницу</string>
     <string name="edit_add_page_left">Добавить страницу слева</string>
     <string name="edit_add_page_right">Добавить страницу справа</string>
     <string name="delete_page_title">Удалить страницу?</string>
-    <string name="delete_page_text">Значки и папки на этой странице будут убраны с главного экрана.</string>
+    <string name="delete_page_text">Значки, папки и виджеты на этой странице будут убраны с главного экрана.</string>
     <string name="delete_page_confirm">Удалить</string>
 
+    <string name="widgets_title">Виджеты</string>
+    <string name="widget_unavailable">Виджет недоступен</string>
+
     <string name="shortcut_added">Ярлык добавлен на главный экран</string>
+
+    <string name="settings_title">Настройки</string>
+    <string name="settings_home">Главный экран</string>
+    <string name="settings_drawer">Меню приложений</string>
+    <string name="settings_gestures">Жесты</string>
+    <string name="settings_grid">Сетка</string>
+    <string name="settings_lock_layout">Заблокировать раскладку</string>
+    <string name="settings_lock_layout_summary">Значки на главном экране нельзя переместить или убрать</string>
+    <string name="settings_dim_wallpaper">Затемнять обои в тёмной теме</string>
+    <string name="settings_hidden_apps">Скрытые приложения</string>
+    <string name="settings_none">Нет</string>
+    <string name="settings_double_tap_lock">Двойной тап — выключить экран</string>
+    <string name="settings_lock_service_needed">Включите службу MaxLauncher в «Специальных возможностях»</string>
+    <string name="settings_version">Версия %1$s</string>
+
+    <string name="lock_service_label">MaxLauncher: выключение экрана</string>
+    <string name="lock_service_description">Нужна только для выключения экрана двойным тапом по главному экрану. Служба не читает содержимое экрана и не получает событий.</string>
+    <string name="lock_service_explanation">Android позволяет сторонним лаунчерам выключать экран только через службу специальных возможностей. Откройте настройки и включите «MaxLauncher: выключение экрана».</string>
+    <string name="lock_service_open_settings">Открыть настройки</string>
+    <string name="lock_service_off">Служба выключения экрана не включена — включите её в настройках лаунчера</string>
 </resources>

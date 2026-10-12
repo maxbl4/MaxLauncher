@@ -73,17 +73,39 @@ class AppRepository(private val context: Context) {
         override fun onPackagesUnsuspended(packageNames: Array<String>, user: UserHandle) = reloadAll()
     }
 
-    // Labels are localized, and the sort order depends on them.
-    private val localeReceiver = object : BroadcastReceiver() {
+    private val _workPaused = MutableStateFlow(false)
+
+    /** The work profile exists but is paused (quiet mode). */
+    val workPaused: StateFlow<Boolean> = _workPaused.asStateFlow()
+
+    // Labels are localized (the sort order depends on them); profiles come and go.
+    private val reloadReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) = reloadAll()
     }
 
     init {
         launcherApps.registerCallback(callback, Handler(Looper.getMainLooper()))
-        ContextCompat.registerReceiver(
-            context, localeReceiver, IntentFilter(Intent.ACTION_LOCALE_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED,
-        )
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_LOCALE_CHANGED)
+            addAction(Intent.ACTION_MANAGED_PROFILE_ADDED)
+            addAction(Intent.ACTION_MANAGED_PROFILE_REMOVED)
+            addAction(Intent.ACTION_MANAGED_PROFILE_AVAILABLE)
+            addAction(Intent.ACTION_MANAGED_PROFILE_UNAVAILABLE)
+            addAction(Intent.ACTION_MANAGED_PROFILE_UNLOCKED)
+        }
+        ContextCompat.registerReceiver(context, reloadReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         reloadAll()
+    }
+
+    private fun otherProfiles(): List<UserHandle> = launcherApps.profiles.filter { it != myUser }
+
+    fun hasWorkProfile(): Boolean = otherProfiles().isNotEmpty()
+
+    fun unpauseWork() {
+        otherProfiles().forEach { user ->
+            runCatching { userManager.requestQuietModeEnabled(false, user) }
+                .onFailure { Log.w(TAG, "Unpausing $user failed", it) }
+        }
     }
 
     fun reloadAll() {
@@ -126,6 +148,7 @@ class AppRepository(private val context: Context) {
 
     private fun publish() {
         _apps.value = entries.values.sortedWith(AppSorting.comparator { it.label })
+        _workPaused.value = otherProfiles().any { userManager.isQuietModeEnabled(it) }
     }
 
     // --- Actions ---

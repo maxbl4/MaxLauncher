@@ -1,5 +1,6 @@
 package com.maxbl4.maxlauncher.ui
 
+import android.app.WallpaperManager
 import android.content.Intent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
@@ -33,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -51,11 +53,16 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toSize
 import com.maxbl4.maxlauncher.R
+import com.maxbl4.maxlauncher.SettingsActivity
 import com.maxbl4.maxlauncher.apps.AppEntry
 import com.maxbl4.maxlauncher.apps.AppShortcut
 import com.maxbl4.maxlauncher.apps.AppSorting
@@ -69,10 +76,15 @@ import com.maxbl4.maxlauncher.home.HomePage
 import com.maxbl4.maxlauncher.home.HomeRepository
 import com.maxbl4.maxlauncher.home.Placed
 import com.maxbl4.maxlauncher.home.ShortcutItem
+import com.maxbl4.maxlauncher.home.WidgetItem
 import com.maxbl4.maxlauncher.home.addPage
+import com.maxbl4.maxlauncher.home.movePage
 import com.maxbl4.maxlauncher.home.removePage
+import com.maxbl4.maxlauncher.home.resizeWidget
 import com.maxbl4.maxlauncher.home.setHomePage
+import com.maxbl4.maxlauncher.widgets.WidgetHostManager
 import kotlinx.coroutines.flow.first
+import kotlin.math.roundToInt
 
 /** Everything needed to draw home items. */
 class HomeContent(
@@ -82,12 +94,13 @@ class HomeContent(
     val shortcuts: Map<Long, AppShortcut>,
     val labelStyle: LabelStyle,
     val darkTheme: Boolean,
+    val widgets: WidgetHostManager,
 )
 
 /**
  * Home screen: pages scrolled horizontally, page indicator (the home page is a house) and the
- * dock. In edit mode pages shrink and get controls: make home, delete, add page left/right;
- * the dock is replaced by the edit bar.
+ * dock. In edit mode pages shrink and get controls: make home, delete, add page left/right,
+ * long press and drag to reorder; the dock is replaced by the edit bar.
  */
 @Composable
 fun HomeScreen(layout: HomeLayout, home: HomeRepository, content: HomeContent, modifier: Modifier = Modifier) {
@@ -97,14 +110,16 @@ fun HomeScreen(layout: HomeLayout, home: HomeRepository, content: HomeContent, m
     val editProgress by animateFloatAsState(if (state.editMode) 1f else 0f, label = "edit")
     // Pages added by dragging an item past the last page; removed again if left empty.
     val dragPages = remember { mutableSetOf<Long>() }
+    var focusPageId by remember { mutableStateOf<Long?>(null) }
 
     SideEffect {
-        state.onEdgeScroll = edge@{ direction ->
+        state.currentHomePageId = layout.pages.getOrNull(pagerState.currentPage)?.id
+        state.onEdgeScroll = edge@{ direction, mayAddPage ->
             val target = pagerState.currentPage + direction
             if (target < 0) return@edge
             if (target >= currentLayout.pages.size) {
                 // Past the last page: add a new one, unless the last page is still empty.
-                if (currentLayout.pages.last().items.isEmpty()) return@edge
+                if (!mayAddPage || currentLayout.pages.last().items.isEmpty()) return@edge
                 home.update { l -> l.addPage(l.pages.size).also { dragPages += it.first }.second }
                 snapshotFlow { pagerState.pageCount }.first { it > target }
             }
@@ -117,7 +132,20 @@ fun HomeScreen(layout: HomeLayout, home: HomeRepository, content: HomeContent, m
                 ids.fold(l) { acc, id -> if (acc.pages.firstOrNull { it.id == id }?.items?.isEmpty() == true) acc.removePage(id) else acc }
             }
         }
+        state.onPageDrop = { pageId ->
+            home.update { l -> l.movePage(l.pages.indexOfFirst { it.id == pageId }, pagerState.currentPage) }
+            focusPageId = pageId
+        }
     }
+    // After a page moved, the pager follows the page that was shown; switch to the moved one.
+    LaunchedEffect(layout.pages, focusPageId) {
+        val index = layout.pages.indexOfFirst { it.id == focusPageId }
+        if (index >= 0) {
+            pagerState.scrollToPage(index)
+            focusPageId = null
+        }
+    }
+    WallpaperParallax(pagerState.let { { it.currentPage + it.currentPageOffsetFraction } }, layout.pages.size)
 
     var pageToDelete by remember { mutableStateOf<HomePage?>(null) }
 
@@ -133,6 +161,7 @@ fun HomeScreen(layout: HomeLayout, home: HomeRepository, content: HomeContent, m
                 PageView(
                     page = page,
                     layout = layout,
+                    home = home,
                     content = content,
                     editProgress = editProgress,
                     isFirst = index == 0,
@@ -146,24 +175,27 @@ fun HomeScreen(layout: HomeLayout, home: HomeRepository, content: HomeContent, m
                 )
             }
             val dragSource = state.drag?.source
-            if (dragSource != null && dragSource !is DragSource.DrawerApp) {
+            if (!state.dragInDrawer && (dragSource is DragSource.HomeEntry || dragSource is DragSource.FolderEntry)) {
                 RemoveZone(state, Modifier.align(Alignment.TopCenter))
             }
         }
         PageIndicator(layout, pagerState.currentPage, content.labelStyle.color, visible = layout.pages.size > 1 || state.editMode)
         if (state.editMode) {
-            EditBar(content.labelStyle.color)
+            EditBar(state, content.labelStyle.color)
         } else {
             ItemGrid(
                 container = Container.Dock,
                 items = layout.dock,
                 columns = layout.dockSlots,
                 rows = 1,
+                home = home,
                 content = content,
                 modifier = Modifier.fillMaxWidth().height(104.dp).padding(horizontal = 8.dp),
             )
         }
     }
+
+    state.pageDrag?.let { drag -> PageDragOverlay(drag.position, content.labelStyle.color) }
 
     pageToDelete?.let { page ->
         AlertDialog(
@@ -183,10 +215,28 @@ fun HomeScreen(layout: HomeLayout, home: HomeRepository, content: HomeContent, m
     }
 }
 
+/** Moves the wallpaper with the pages, if the wallpaper is wider than the screen. */
+@Composable
+private fun WallpaperParallax(position: () -> Float, pageCount: Int) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    LaunchedEffect(pageCount) {
+        val manager = WallpaperManager.getInstance(context)
+        val step = if (pageCount > 1) 1f / (pageCount - 1) else 0f
+        manager.setWallpaperOffsetSteps(step, 1f)
+        snapshotFlow(position).collect { pos ->
+            val token = view.windowToken ?: return@collect
+            val x = if (pageCount > 1) (pos / (pageCount - 1)).coerceIn(0f, 1f) else 0.5f
+            runCatching { manager.setWallpaperOffsets(token, x, 0.5f) }
+        }
+    }
+}
+
 @Composable
 private fun PageView(
     page: HomePage,
     layout: HomeLayout,
+    home: HomeRepository,
     content: HomeContent,
     editProgress: Float,
     isFirst: Boolean,
@@ -198,9 +248,11 @@ private fun PageView(
 ) {
     val state = content.state
     val color = content.labelStyle.color
+    val dragged = state.pageDrag?.pageId == page.id
     Box(
         Modifier
             .fillMaxSize()
+            .alpha(if (dragged) 0.35f else 1f)
             .then(
                 if (state.editMode) {
                     Modifier.pointerInput(Unit) { detectTapGestures { state.editMode = false } }
@@ -228,7 +280,7 @@ private fun PageView(
                 )
                 .padding(horizontal = 8.dp, vertical = 8.dp),
         ) {
-            ItemGrid(Container.Page(page.id), page.items, layout.columns, layout.rows, content, Modifier.fillMaxSize())
+            ItemGrid(Container.Page(page.id), page.items, layout.columns, layout.rows, home, content, Modifier.fillMaxSize())
         }
 
         if (state.editMode) {
@@ -265,7 +317,7 @@ private fun PageView(
 
 /**
  * A grid of home items (a page or the dock). Registers its bounds so drops can be mapped to
- * cells, and highlights the cell under a dragged item.
+ * cells, and highlights the cells under a dragged item.
  */
 @Composable
 private fun ItemGrid(
@@ -273,20 +325,36 @@ private fun ItemGrid(
     items: List<Placed>,
     columns: Int,
     rows: Int,
+    home: HomeRepository,
     content: HomeContent,
     modifier: Modifier = Modifier,
 ) {
     val state = content.state
     DisposableEffect(container) { onDispose { state.unregisterGrid(container) } }
-    BoxWithConstraints(modifier.onGloballyPositioned { state.registerGrid(container, columns, rows, it.boundsInRoot()) }) {
+    BoxWithConstraints(
+        modifier
+            .onGloballyPositioned { state.registerGrid(container, columns, rows, it.boundsInRoot(), it.size.toSize()) }
+            .then(
+                if (state.resizingWidgetId != null) {
+                    Modifier.pointerInput(Unit) { detectTapGestures { state.resizingWidgetId = null } }
+                } else {
+                    Modifier
+                },
+            ),
+    ) {
         val cellWidth = maxWidth / columns
         val cellHeight = maxHeight / rows
         val hover = state.hover as? DropTarget.Cell
         if (hover != null && hover.container == container) {
+            val draggedPlaced = (state.drag?.source as? DragSource.HomeEntry)?.item?.let { item -> items.firstOrNull { it.item.id == item.id } }
+            val spanX = if (draggedPlaced?.item is WidgetItem) draggedPlaced.spanX else 1
+            val spanY = if (draggedPlaced?.item is WidgetItem) draggedPlaced.spanY else 1
+            val x = hover.x.coerceAtMost(columns - spanX)
+            val y = hover.y.coerceAtMost(rows - spanY)
             Box(
                 Modifier
-                    .offset(cellWidth * hover.x, cellHeight * hover.y)
-                    .size(cellWidth, cellHeight)
+                    .offset(cellWidth * x, cellHeight * y)
+                    .size(cellWidth * spanX, cellHeight * spanY)
                     .padding(4.dp)
                     .background(content.labelStyle.color.copy(alpha = 0.18f), RoundedCornerShape(18.dp)),
             )
@@ -294,12 +362,20 @@ private fun ItemGrid(
         for (placed in items) {
             key(placed.item.id) {
                 Box(
-                    Modifier.offset(cellWidth * placed.x, cellHeight * placed.y).size(cellWidth, cellHeight),
+                    Modifier
+                        .offset(cellWidth * placed.x, cellHeight * placed.y)
+                        .size(cellWidth * placed.spanX, cellHeight * placed.spanY),
                     contentAlignment = Alignment.Center,
                 ) {
                     HomeItemView(placed.item, content)
                 }
             }
+        }
+        val resizing = items.firstOrNull { it.item.id == state.resizingWidgetId }
+        if (resizing != null) {
+            WidgetResizeFrame(resizing, columns, rows, cellWidth, cellHeight, content, onResize = { x, y, w, h ->
+                home.update { it.resizeWidget(resizing.item.id, x, y, w, h) }
+            })
         }
     }
 }
@@ -319,7 +395,7 @@ private fun HomeItemView(item: HomeItem, content: HomeContent) {
         is FolderItem -> {
             val icons = remember(item, content.appsByRef) { folderIcons(item, content.appsByRef) }
             LauncherIcon(item.title, content.labelStyle, onClick = { state.openFolderId = item.id }, modifier = modifier) {
-                FolderIcon(icons, it, dark = content.darkTheme)
+                FolderIcon(icons, it, homeFolderBackground(content.darkTheme))
             }
         }
         is ShortcutItem -> {
@@ -338,6 +414,7 @@ private fun HomeItemView(item: HomeItem, content: HomeContent) {
                 }
             }
         }
+        is WidgetItem -> WidgetView(item, content.widgets, modifier.fillMaxSize().padding(4.dp))
     }
 }
 
@@ -351,11 +428,10 @@ private fun RemoveZone(state: LauncherState, modifier: Modifier) {
     val active = state.hover == DropTarget.Remove
     Box(
         modifier
-            .padding(top = 8.dp)
             .onGloballyPositioned { state.setRemoveZone(it.boundsInRoot()) }
             .clip(RoundedCornerShape(24.dp))
             .background(if (active) Color(0xE6D32F2F) else Color(0x99000000))
-            .padding(horizontal = 28.dp, vertical = 12.dp),
+            .padding(horizontal = 28.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(painterResource(R.drawable.ic_delete), contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
@@ -385,29 +461,56 @@ private fun PageIndicator(layout: HomeLayout, currentPage: Int, color: Color, vi
 }
 
 @Composable
-private fun EditBar(color: Color) {
+private fun EditBar(state: LauncherState, color: Color) {
     val context = LocalContext.current
     val wallpaperTitle = stringResource(R.string.edit_wallpaper)
     Row(
-        horizontalArrangement = Arrangement.Center,
+        horizontalArrangement = Arrangement.SpaceEvenly,
         modifier = Modifier.fillMaxWidth().height(104.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier
-                .clip(RoundedCornerShape(16.dp))
-                .clickable {
-                    val intent = Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), wallpaperTitle)
-                    runCatching { context.startActivity(intent) }
-                }
-                .padding(horizontal = 20.dp, vertical = 8.dp),
-        ) {
-            Icon(painterResource(R.drawable.ic_wallpaper), contentDescription = null, tint = color, modifier = Modifier.size(28.dp))
-            Spacer(Modifier.height(4.dp))
-            Text(wallpaperTitle, color = color, fontSize = 13.sp)
+        EditBarButton(R.drawable.ic_wallpaper, wallpaperTitle, color) {
+            val intent = Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), wallpaperTitle)
+            runCatching { context.startActivity(intent) }
+        }
+        EditBarButton(R.drawable.ic_widgets, stringResource(R.string.edit_widgets), color) {
+            state.widgetPickerOpen = true
+        }
+        EditBarButton(R.drawable.ic_settings, stringResource(R.string.edit_settings), color) {
+            context.startActivity(Intent(context, SettingsActivity::class.java))
         }
     }
+}
+
+@Composable
+private fun EditBarButton(icon: Int, label: String, color: Color, onClick: () -> Unit) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Icon(painterResource(icon), contentDescription = null, tint = color, modifier = Modifier.size(28.dp))
+        Spacer(Modifier.height(4.dp))
+        Text(label, color = color, fontSize = 13.sp)
+    }
+}
+
+/** A page outline following the finger while pages are reordered. */
+@Composable
+private fun PageDragOverlay(position: androidx.compose.ui.geometry.Offset, color: Color) {
+    val density = LocalDensity.current
+    val width = 110.dp
+    val height = 200.dp
+    val half = with(density) { androidx.compose.ui.geometry.Offset(width.toPx() / 2, height.toPx() / 2) }
+    Box(
+        Modifier
+            .offset { (position - half).let { IntOffset(it.x.roundToInt(), it.y.roundToInt()) } }
+            .size(width, height)
+            .border(2.dp, color.copy(alpha = 0.9f), RoundedCornerShape(16.dp))
+            .background(color.copy(alpha = 0.15f), RoundedCornerShape(16.dp)),
+    )
 }
 
 @Composable

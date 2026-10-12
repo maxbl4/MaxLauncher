@@ -24,19 +24,21 @@ fun HomeLayout.remove(itemId: Long): HomeLayout {
 
 /**
  * Drops [item] (not yet in the layout) onto a cell. An app dropped onto another app creates a
- * folder; onto a folder it joins the folder. Otherwise the item takes the cell, or the nearest
- * free one when the cell is taken. Returns null when the container has no room.
+ * folder; onto a folder it joins the folder. Otherwise the item takes the cell (the area, for
+ * widgets), or the nearest free one. Returns null when the container has no room.
  */
-fun HomeLayout.drop(item: HomeItem, container: Container, x: Int, y: Int): HomeLayout? {
+fun HomeLayout.drop(item: HomeItem, container: Container, x: Int, y: Int, spanX: Int = 1, spanY: Int = 1): HomeLayout? {
     if (!exists(container)) return null
+    // Widgets live on pages only.
+    if (item is WidgetItem && container !is Container.Page) return null
     val (columns, rows) = size(container)
-    val cx = x.coerceIn(0, columns - 1)
-    val cy = y.coerceIn(0, rows - 1)
-    val occupant = itemAt(container, cx, cy)
-        ?: return withItems(container, items(container) + Placed(item, cx, cy))
+    if (spanX > columns || spanY > rows) return null
+    val cx = x.coerceIn(0, columns - spanX)
+    val cy = y.coerceIn(0, rows - spanY)
 
-    if (item is AppItem) {
-        when (val target = occupant.item) {
+    if (spanX == 1 && spanY == 1 && item is AppItem) {
+        val occupant = itemAt(container, cx, cy)
+        when (val target = occupant?.item) {
             is AppItem -> {
                 val (folderId, layout) = allocateId()
                 val folder = FolderItem(folderId, apps = listOf(target, item))
@@ -46,21 +48,32 @@ fun HomeLayout.drop(item: HomeItem, container: Container, x: Int, y: Int): HomeL
                 val apps = if (target.apps.any { it.app == item.app }) target.apps else target.apps + item
                 return withItems(container, items(container).replace(occupant, occupant.copy(item = target.copy(apps = apps))))
             }
-            is ShortcutItem -> Unit
+            else -> Unit
         }
     }
-    val (fx, fy) = nearestFreeCell(container, cx, cy) ?: return null
-    return withItems(container, items(container) + Placed(item, fx, fy))
+    val (fx, fy) = if (isAreaFree(container, cx, cy, spanX, spanY)) cx to cy
+    else nearestFreeArea(container, cx, cy, spanX, spanY) ?: return null
+    return withItems(container, items(container) + Placed(item, fx, fy, spanX, spanY))
 }
 
 /** Moves an existing item (top-level or from a folder) to a cell; unchanged when it does not fit. */
 fun HomeLayout.move(itemId: Long, container: Container, x: Int, y: Int): HomeLayout {
     val item = findItem(itemId) ?: return this
+    val source = findPlaced(itemId)?.second
+    val spanX = source?.spanX ?: 1
+    val spanY = source?.spanY ?: 1
     val occupant = itemAt(container, x, y)?.item
-    // Dropping an item onto itself, or an app back onto its own folder, changes nothing.
-    if (occupant?.id == itemId) return this
+    // Dropping an icon onto itself, or an app back onto its own folder, changes nothing.
+    if (spanX == 1 && spanY == 1 && occupant?.id == itemId) return this
     if (occupant is FolderItem && occupant.apps.any { it.id == itemId }) return this
-    return remove(itemId).drop(item, container, x, y) ?: this
+    return remove(itemId).drop(item, container, x, y, spanX, spanY) ?: this
+}
+
+/** Moves and/or resizes a widget; unchanged when the area is outside the grid or taken. */
+fun HomeLayout.resizeWidget(itemId: Long, x: Int, y: Int, spanX: Int, spanY: Int): HomeLayout {
+    val (container, placed) = findPlaced(itemId) ?: return this
+    if (spanX < 1 || spanY < 1 || !isAreaFree(container, x, y, spanX, spanY, ignoreId = itemId)) return this
+    return withItems(container, items(container).replace(placed, placed.copy(x = x, y = y, spanX = spanX, spanY = spanY)))
 }
 
 /** Adds a new app at the first free cell, starting from [preferredPageId]; appends a page if all are full. */
@@ -72,6 +85,20 @@ fun HomeLayout.addApp(app: AppRef, preferredPageId: Long = homePageId): HomeLayo
 fun HomeLayout.addShortcut(packageName: String, shortcutId: String, userSerial: Long, label: String): HomeLayout {
     val (id, layout) = allocateId()
     return layout.placeAnywhere(ShortcutItem(id, packageName, shortcutId, userSerial, label), homePageId)
+}
+
+fun HomeLayout.addWidget(
+    appWidgetId: Int,
+    provider: String,
+    userSerial: Long,
+    spanX: Int,
+    spanY: Int,
+    preferredPageId: Long,
+): HomeLayout {
+    val (id, layout) = allocateId()
+    val w = spanX.coerceIn(1, columns)
+    val h = spanY.coerceIn(1, rows)
+    return layout.placeAnywhere(WidgetItem(id, appWidgetId, provider, userSerial), preferredPageId, w, h)
 }
 
 /** Replaces the folder content with [apps], keeping ids of apps that stay. */
@@ -103,7 +130,7 @@ fun HomeLayout.dissolveFolder(folderId: Long): HomeLayout {
         layout = if (i == 0) {
             layout.withItems(container, layout.items(container) + Placed(app, placed.x, placed.y))
         } else {
-            layout.nearestFreeCell(container, placed.x, placed.y)
+            layout.nearestFreeArea(container, placed.x, placed.y)
                 ?.let { (x, y) -> layout.withItems(container, layout.items(container) + Placed(app, x, y)) }
                 ?: layout.placeAnywhere(app, preferredPage)
         }
@@ -113,21 +140,64 @@ fun HomeLayout.dissolveFolder(folderId: Long): HomeLayout {
 
 /** Removes every occurrence of an app (e.g. after it was uninstalled). */
 fun HomeLayout.removeApp(app: AppRef): HomeLayout {
-    val ids = containers.flatMap { items(it) }.flatMap { p ->
+    val ids = allPlaced().flatMap { p ->
         when (val item = p.item) {
             is AppItem -> listOfNotNull(item.id.takeIf { item.app == app })
             is FolderItem -> item.apps.filter { it.app == app }.map { it.id }
-            is ShortcutItem -> emptyList()
+            else -> emptyList()
         }
     }
     return ids.fold(this) { layout, id -> layout.remove(id) }
 }
 
 fun HomeLayout.removeShortcutsOf(packageName: String, userSerial: Long): HomeLayout {
-    val ids = containers.flatMap { items(it) }.mapNotNull { p ->
+    val ids = allPlaced().mapNotNull { p ->
         (p.item as? ShortcutItem)?.takeIf { it.packageName == packageName && it.userSerial == userSerial }?.id
     }
     return ids.fold(this) { layout, id -> layout.remove(id) }
+}
+
+fun HomeLayout.removeWidgetsOf(packageName: String, userSerial: Long): HomeLayout {
+    val ids = allPlaced().mapNotNull { p ->
+        (p.item as? WidgetItem)?.takeIf { it.provider.substringBefore('/') == packageName && it.userSerial == userSerial }?.id
+    }
+    return ids.fold(this) { layout, id -> layout.remove(id) }
+}
+
+fun HomeLayout.allPlaced(): List<Placed> = containers.flatMap { items(it) }
+
+fun HomeLayout.widgets(): List<WidgetItem> = allPlaced().mapNotNull { it.item as? WidgetItem }
+
+// --- Grid size ---
+
+/**
+ * Changes the grid (the dock follows the column count). Items that no longer fit move to the
+ * nearest free spot on the same page, or to other pages; widgets shrink to fit the grid.
+ */
+fun HomeLayout.resizeGrid(newColumns: Int, newRows: Int): HomeLayout {
+    if (newColumns == columns && newRows == rows) return this
+    val displaced = mutableListOf<Pair<Long, Placed>>() // page id (or -1 for the dock) to item
+    val pages = pages.map { page ->
+        val (keep, move) = page.items
+            .map { it.copy(spanX = it.spanX.coerceAtMost(newColumns), spanY = it.spanY.coerceAtMost(newRows)) }
+            .partition { it.x + it.spanX <= newColumns && it.y + it.spanY <= newRows }
+        displaced += move.map { page.id to it }
+        page.copy(items = keep)
+    }
+    val (dockKeep, dockMove) = dock.partition { it.x < newColumns }
+    displaced += dockMove.map { -1L to it }
+
+    var layout = copy(columns = newColumns, rows = newRows, dockSlots = newColumns, pages = pages, dock = dockKeep)
+    for ((pageId, placed) in displaced) {
+        val container: Container = if (pageId == -1L) Container.Dock else Container.Page(pageId)
+        val spot = layout.nearestFreeArea(container, placed.x, placed.y, placed.spanX, placed.spanY)
+        layout = if (spot != null) {
+            layout.withItems(container, layout.items(container) + placed.copy(x = spot.first, y = spot.second))
+        } else {
+            layout.placeAnywhere(placed.item, if (pageId == -1L) homePageId else pageId, placed.spanX, placed.spanY)
+        }
+    }
+    return layout
 }
 
 // --- Pages ---
@@ -160,29 +230,32 @@ fun HomeLayout.movePage(from: Int, to: Int): HomeLayout {
 
 // --- Helpers ---
 
-fun HomeLayout.nearestFreeCell(container: Container, x: Int, y: Int): Pair<Int, Int>? {
+/** The free top-left position for a [spanX] × [spanY] area closest to (x, y). */
+fun HomeLayout.nearestFreeArea(container: Container, x: Int, y: Int, spanX: Int = 1, spanY: Int = 1): Pair<Int, Int>? {
     val (columns, rows) = size(container)
-    val taken = items(container).map { it.x to it.y }.toSet()
-    return (0 until rows).flatMap { cy -> (0 until columns).map { cx -> cx to cy } }
-        .filter { it !in taken }
+    return (0..rows - spanY).flatMap { cy -> (0..columns - spanX).map { cx -> cx to cy } }
+        .filter { (cx, cy) -> isAreaFree(container, cx, cy, spanX, spanY) }
         .minByOrNull { (cx, cy) -> (cx - x) * (cx - x) + (cy - y) * (cy - y) }
 }
 
-private fun HomeLayout.firstFreeCell(container: Container): Pair<Int, Int>? {
+private fun HomeLayout.firstFreeArea(container: Container, spanX: Int, spanY: Int): Pair<Int, Int>? {
     val (columns, rows) = size(container)
-    val taken = items(container).map { it.x to it.y }.toSet()
-    for (cy in 0 until rows) for (cx in 0 until columns) if ((cx to cy) !in taken) return cx to cy
+    for (cy in 0..rows - spanY) for (cx in 0..columns - spanX) {
+        if (isAreaFree(container, cx, cy, spanX, spanY)) return cx to cy
+    }
     return null
 }
 
-private fun HomeLayout.placeAnywhere(item: HomeItem, preferredPageId: Long): HomeLayout {
+private fun HomeLayout.placeAnywhere(item: HomeItem, preferredPageId: Long, spanX: Int = 1, spanY: Int = 1): HomeLayout {
     val ordered = pages.sortedBy { if (it.id == preferredPageId) 0 else 1 }
     for (page in ordered) {
         val container = Container.Page(page.id)
-        firstFreeCell(container)?.let { (x, y) -> return withItems(container, items(container) + Placed(item, x, y)) }
+        firstFreeArea(container, spanX, spanY)?.let { (x, y) ->
+            return withItems(container, items(container) + Placed(item, x, y, spanX, spanY))
+        }
     }
     val (pageId, layout) = addPage(pages.size)
-    return layout.withItems(Container.Page(pageId), listOf(Placed(item, 0, 0)))
+    return layout.withItems(Container.Page(pageId), listOf(Placed(item, 0, 0, spanX, spanY)))
 }
 
 /** The folder with new content; with one app left it becomes that app, with none it is gone. */

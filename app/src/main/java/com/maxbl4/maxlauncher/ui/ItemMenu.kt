@@ -21,27 +21,47 @@ import androidx.compose.ui.unit.dp
 import com.maxbl4.maxlauncher.R
 import com.maxbl4.maxlauncher.apps.AppEntry
 import com.maxbl4.maxlauncher.apps.AppShortcut
+import com.maxbl4.maxlauncher.drawer.DrawerLayout
 import com.maxbl4.maxlauncher.home.AppItem
-import com.maxbl4.maxlauncher.home.AppRef
 import com.maxbl4.maxlauncher.home.FolderItem
 import com.maxbl4.maxlauncher.home.HomeRepository
 import com.maxbl4.maxlauncher.home.ShortcutItem
+import com.maxbl4.maxlauncher.home.WidgetItem
 import com.maxbl4.maxlauncher.home.addApp
 import com.maxbl4.maxlauncher.home.dissolveFolder
 import com.maxbl4.maxlauncher.home.remove
+import com.maxbl4.maxlauncher.settings.JsonFileStore
 import kotlin.math.roundToInt
 
 /** Long-press menu, anchored to the pressed item. Its entries depend on what was pressed. */
 @Composable
 fun ItemMenu(
     request: MenuRequest,
-    actions: AppActions,
+    content: HomeContent,
     home: HomeRepository,
-    appsByRef: Map<AppRef, AppEntry>,
+    drawer: JsonFileStore<DrawerLayout>,
     onDismiss: () -> Unit,
 ) {
     val bounds = request.bounds
     val density = LocalDensity.current
+    val locked = content.state.layoutLocked
+    val actions = content.actions
+
+    /** A menu entry that closes the menu and runs [action]. */
+    @Composable
+    fun entry(text: Int, action: () -> Unit) {
+        DropdownMenuItem(text = { Text(stringResource(text)) }, onClick = { onDismiss(); action() })
+    }
+
+    @Composable
+    fun lockedNote() {
+        DropdownMenuItem(text = { Text(stringResource(R.string.menu_layout_locked)) }, onClick = onDismiss, enabled = false)
+    }
+
+    val addToHome: (AppEntry) -> @Composable () -> Unit = { app ->
+        { if (!locked) entry(R.string.menu_add_to_home) { home.update { it.addApp(app.ref) } } }
+    }
+
     Box(
         Modifier
             .offset { IntOffset(bounds.left.roundToInt(), bounds.top.roundToInt()) }
@@ -49,52 +69,39 @@ fun ItemMenu(
     ) {
         DropdownMenu(expanded = true, onDismissRequest = onDismiss, shape = RoundedCornerShape(20.dp)) {
             when (val source = request.source) {
-                is DragSource.DrawerApp -> AppEntries(
-                    entry = source.entry,
-                    actions = actions,
-                    onDismiss = onDismiss,
-                    extra = {
-                        MenuItem(stringResource(R.string.menu_add_to_home)) {
-                            onDismiss()
-                            home.update { it.addApp(source.entry.ref) }
-                        }
-                    },
-                )
-                is DragSource.HomeEntry -> when (val homeItem = source.item) {
+                is DragSource.DrawerApp -> AppEntries(source.entry, actions, onDismiss, extra = addToHome(source.entry))
+                is DragSource.DrawerFolderApp -> AppEntries(source.entry, actions, onDismiss, extra = {
+                    entry(R.string.menu_remove_from_folder) { drawer.update { it.removeApp(source.entry.ref) } }
+                    addToHome(source.entry)()
+                })
+                is DragSource.DrawerFolderEntry -> entry(R.string.menu_delete_folder) {
+                    drawer.update { it.deleteFolder(source.folder.id) }
+                }
+                is DragSource.HomeEntry -> when (val item = source.item) {
                     is AppItem -> {
-                        val entry = appsByRef[homeItem.app]
-                        if (entry != null) {
-                            AppEntries(entry, actions, onDismiss, extra = {
-                                MenuItem(stringResource(R.string.menu_remove_from_home)) {
-                                    onDismiss()
-                                    home.update { it.remove(homeItem.id) }
-                                }
-                            })
-                        } else {
-                            MenuItem(stringResource(R.string.menu_remove_from_home)) {
-                                onDismiss()
-                                home.update { it.remove(homeItem.id) }
-                            }
+                        val removeEntry: @Composable () -> Unit = {
+                            if (!locked) entry(R.string.menu_remove_from_home) { home.update { it.remove(item.id) } }
                         }
+                        val app = content.appsByRef[item.app]
+                        if (app != null) AppEntries(app, actions, onDismiss, extra = removeEntry) else removeEntry()
                     }
-                    is FolderItem -> MenuItem(stringResource(R.string.menu_delete_folder)) {
-                        onDismiss()
-                        home.update { it.dissolveFolder(homeItem.id) }
+                    is FolderItem -> if (locked) lockedNote() else entry(R.string.menu_delete_folder) {
+                        home.update { it.dissolveFolder(item.id) }
                     }
-                    is ShortcutItem -> MenuItem(stringResource(R.string.menu_remove_from_home)) {
-                        onDismiss()
-                        home.update { it.remove(homeItem.id) }
+                    is ShortcutItem -> if (locked) lockedNote() else entry(R.string.menu_remove_from_home) {
+                        home.update { it.remove(item.id) }
+                    }
+                    is WidgetItem -> if (locked) lockedNote() else {
+                        entry(R.string.menu_resize) { content.state.resizingWidgetId = item.id }
+                        entry(R.string.menu_remove_from_home) { home.update { it.remove(item.id) } }
                     }
                 }
                 is DragSource.FolderEntry -> {
-                    val removeItem: @Composable () -> Unit = {
-                        MenuItem(stringResource(R.string.menu_remove_from_folder)) {
-                            onDismiss()
-                            home.update { it.remove(source.item.id) }
-                        }
+                    val removeEntry: @Composable () -> Unit = {
+                        if (!locked) entry(R.string.menu_remove_from_folder) { home.update { it.remove(source.item.id) } }
                     }
-                    val entry = appsByRef[source.item.app]
-                    if (entry != null) AppEntries(entry, actions, onDismiss, extra = removeItem) else removeItem()
+                    val app = content.appsByRef[source.item.app]
+                    if (app != null) AppEntries(app, actions, onDismiss, extra = removeEntry) else removeEntry()
                 }
             }
         }
@@ -124,19 +131,14 @@ private fun AppEntries(
     }
     if (shortcuts.isNotEmpty()) HorizontalDivider()
     extra()
-    MenuItem(stringResource(R.string.menu_app_info)) {
+    DropdownMenuItem(text = { Text(stringResource(R.string.menu_app_info)) }, onClick = {
         onDismiss()
         actions.openAppInfo(entry, null)
-    }
+    })
     if (!entry.isSystem) {
-        MenuItem(stringResource(R.string.menu_uninstall)) {
+        DropdownMenuItem(text = { Text(stringResource(R.string.menu_uninstall)) }, onClick = {
             onDismiss()
             actions.uninstall(entry)
-        }
+        })
     }
-}
-
-@Composable
-private fun MenuItem(text: String, onClick: () -> Unit) {
-    DropdownMenuItem(text = { Text(text) }, onClick = onClick)
 }

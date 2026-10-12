@@ -14,12 +14,19 @@
 .PARAMETER NoDefault
     Install only; do not change the default launcher.
 
+.PARAMETER Release
+    Build and install the optimized release build (much smoother UI than debug).
+
 .EXAMPLE
     ./install-debug.ps1
+
+.EXAMPLE
+    ./install-debug.ps1 -Release
 #>
 param(
     [string]$Serial,
-    [switch]$NoDefault
+    [switch]$NoDefault,
+    [switch]$Release
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,11 +66,12 @@ if ($Serial) {
 }
 
 # --- Build ---
-Write-Host "Building debug APK (JAVA_HOME=$env:JAVA_HOME)..." -ForegroundColor Cyan
-& "$projectDir\gradlew.bat" :app:assembleDebug --console=plain
+$variant = if ($Release) { 'release' } else { 'debug' }
+Write-Host "Building $variant APK (JAVA_HOME=$env:JAVA_HOME)..." -ForegroundColor Cyan
+& "$projectDir\gradlew.bat" ":app:assemble$((Get-Culture).TextInfo.ToTitleCase($variant))" --console=plain
 if ($LASTEXITCODE -ne 0) { throw "Gradle build failed (exit $LASTEXITCODE)." }
 
-$apk = Join-Path $projectDir 'app\build\outputs\apk\debug\app-debug.apk'
+$apk = Join-Path $projectDir "app\build\outputs\apk\$variant\app-$variant.apk"
 if (-not (Test-Path $apk)) { throw "APK not found at '$apk'." }
 
 # --- Install ---

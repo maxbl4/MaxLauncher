@@ -119,6 +119,52 @@ class HomeEditsTest {
     }
 
     @Test
+    fun widgetTakesFreeAreaAndBlocksCells() {
+        val layout = twoApps().drop(WidgetItem(20, 5, "p/.W", 0), page, 0, 0, 2, 2)!!
+        // (0,0) and (1,0) are taken, so the 2x2 widget goes to the nearest free 2x2 area.
+        val widget = layout.findPlaced(20)!!.second
+        assertEquals(listOf(0, 1, 2, 2), listOf(widget.x, widget.y, widget.spanX, widget.spanY))
+        assertEquals(20L, layout.itemAt(page, 1, 2)?.item?.id)
+        // An app dropped onto the widget does not merge; it goes to a free cell.
+        val withApp = layout.drop(AppItem(30, ref("c")), page, 1, 2)!!
+        assertTrue(withApp.findPlaced(30)!!.second.let { !(it.x in 0..1 && it.y in 1..2) })
+    }
+
+    @Test
+    fun widgetsAreNotAllowedInDock() {
+        assertNull(HomeLayout.initial().drop(WidgetItem(20, 5, "p/.W", 0), Container.Dock, 0, 0, 2, 1))
+    }
+
+    @Test
+    fun resizeWidgetRespectsNeighbours() {
+        val layout = twoApps().drop(WidgetItem(20, 5, "p/.W", 0), page, 0, 1, 2, 2)!!
+        assertEquals(layout, layout.resizeWidget(20, 0, 0, 2, 3)) // would cover the apps in row 0
+        val bigger = layout.resizeWidget(20, 0, 1, 4, 3)
+        assertEquals(4 to 3, bigger.findPlaced(20)!!.second.let { it.spanX to it.spanY })
+    }
+
+    @Test
+    fun movingWidgetKeepsItsSize() {
+        val layout = twoApps().drop(WidgetItem(20, 5, "p/.W", 0), page, 0, 1, 2, 2)!!.move(20, page, 2, 4)
+        val widget = layout.findPlaced(20)!!.second
+        assertEquals(listOf(2, 4, 2, 2), listOf(widget.x, widget.y, widget.spanX, widget.spanY))
+    }
+
+    @Test
+    fun shrinkingGridMovesItemsThatNoLongerFit() {
+        val layout = HomeLayout.initial().copy(nextId = 100).withItems(
+            page,
+            listOf(Placed(AppItem(10, ref("a")), 4, 5), Placed(WidgetItem(11, 1, "p/.W", 0), 0, 0, 5, 2)),
+        ).copy(columns = 5, rows = 6, dockSlots = 5).withItems(Container.Dock, listOf(Placed(AppItem(12, ref("d")), 4, 0)))
+        val small = layout.resizeGrid(4, 5)
+        val all = small.allPlaced()
+        assertEquals(3, all.size)
+        assertTrue(all.all { it.x + it.spanX <= 4 })
+        assertEquals(4, small.findPlaced(11)!!.second.spanX)
+        assertEquals(4, small.dockSlots)
+    }
+
+    @Test
     fun jsonRoundTrip() {
         val layout = twoApps().move(10, page, 1, 0).addShortcut("p", "s", 0, "Label")
         val json = Json { ignoreUnknownKeys = true }

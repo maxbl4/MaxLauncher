@@ -32,21 +32,27 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
@@ -58,33 +64,52 @@ import androidx.compose.ui.unit.sp
 import com.maxbl4.maxlauncher.R
 import com.maxbl4.maxlauncher.apps.AppEntry
 import com.maxbl4.maxlauncher.apps.AppSearch
+import com.maxbl4.maxlauncher.drawer.DrawerEntry
 
-private const val DRAWER_COLUMNS = 5
-private const val DRAWER_ROWS = 6
-private const val PAGE_SIZE = DRAWER_COLUMNS * DRAWER_ROWS
+/** What the drawer shows; prepared by the screen from apps, drawer folders and settings. */
+class DrawerContent(
+    /** Personal tab: folders first, then apps in no folder. */
+    val entries: List<DrawerEntry<AppEntry>>,
+    /** All visible personal apps (including those in folders), for search. */
+    val searchable: List<AppEntry>,
+    /** Work profile apps; the tab is shown when [hasWorkProfile]. */
+    val workApps: List<AppEntry>,
+    val hasWorkProfile: Boolean,
+    val workPaused: Boolean,
+    val onUnpauseWork: () -> Unit,
+    val columns: Int,
+    val rows: Int,
+)
 
 /**
- * Full list of apps, paged horizontally, with a search field on top. Composed only while the
- * drawer is visible, so the page and the query reset every time it is reopened.
+ * Full list of apps, paged horizontally, with tabs (when there is a work profile) and the search
+ * field at the bottom. It stays composed (but is not placed) while hidden, so opening it is
+ * instant; the page, the tab and the query reset every time it closes.
  */
 @Composable
-fun AppDrawer(
-    apps: List<AppEntry>,
-    state: LauncherState,
-    actions: AppActions,
-    modifier: Modifier = Modifier,
-) {
+fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modifier = Modifier) {
+    val state = content.state
     val drawer = state.drawer
     val dark = isSystemInDarkTheme()
-    val scrim = if (dark) Color(0xFF101010).copy(alpha = 0.75f) else Color(0xFFF2F2F2).copy(alpha = 0.9f)
+    val scrim = if (dark) Color(0xFF101010).copy(alpha = 0.7f) else Color(0xFFF2F2F2).copy(alpha = 0.82f)
     val contentColor = if (dark) Color(0xFFF2F2F2) else Color(0xFF1A1A1A)
+    val labels = LabelStyle(contentColor, shadow = false)
     val enterOffsetPx = with(LocalDensity.current) { 96.dp.toPx() }
 
+    var workTab by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    val results = remember(apps, query) { AppSearch.filter(apps, query) { it.label } }
+    val searchable = if (workTab) drawerContent.workApps else drawerContent.searchable
+    val results = remember(searchable, query) { AppSearch.filter(searchable, query) { it.label } }
     val focusManager = LocalFocusManager.current
     LaunchedEffect(drawer.isOpen) {
         if (!drawer.isOpen) focusManager.clearFocus()
+    }
+    val visible = drawer.isVisible
+    LaunchedEffect(visible) {
+        if (!visible) {
+            query = ""
+            workTab = false
+        }
     }
     // Search results scroll vertically, so swipes must not close the drawer meanwhile.
     val searching = query.isNotBlank()
@@ -95,6 +120,7 @@ fun AppDrawer(
 
     Box(
         modifier
+            .then(if (visible) Modifier else Modifier.notPlaced())
             .fillMaxSize()
             .drawBehind { drawRect(scrim, alpha = drawer.progress.value) }
             // Swallow touches so they never reach the home screen underneath.
@@ -113,51 +139,109 @@ fun AppDrawer(
                 .imePadding()
                 .padding(horizontal = 8.dp),
         ) {
-            if (query.isBlank()) {
-                PagedApps(apps, state, actions, contentColor, Modifier.weight(1f))
-            } else {
-                SearchResults(results, state, actions, contentColor, Modifier.weight(1f))
+            if (drawerContent.hasWorkProfile) {
+                Tabs(workTab, onSelect = { workTab = it; query = "" }, contentColor)
             }
-            SearchField(
-                query = query,
-                onQueryChange = { query = it },
-                contentColor = contentColor,
-                onGo = { results.firstOrNull()?.let { actions.launch(it, null) } },
-                modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 12.dp),
+            when {
+                searching -> SearchResults(results, content, labels, Modifier.weight(1f))
+                workTab && drawerContent.workPaused -> WorkPaused(drawerContent.onUnpauseWork, contentColor, Modifier.weight(1f))
+                workTab -> PagedEntries(drawerContent.workApps.map { DrawerEntry.App(it) }, drawerContent, content, labels, Modifier.weight(1f))
+                else -> PagedEntries(drawerContent.entries, drawerContent, content, labels, Modifier.weight(1f))
+            }
+            // While an app is dragged, the search field turns into the "to home screen" drop zone.
+            val dragSource = state.drag?.source
+            val showToHome = state.dragInDrawer && !state.layoutLocked && dragSource != null &&
+                dragSource !is DragSource.DrawerFolderEntry
+            Box(Modifier.padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 12.dp)) {
+                if (showToHome) {
+                    ToHomeZone(state, Modifier.fillMaxWidth())
+                } else {
+                    SearchField(
+                        query = query,
+                        onQueryChange = { query = it },
+                        contentColor = contentColor,
+                        onGo = { results.firstOrNull()?.let { content.actions.launch(it, null) } },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Tabs(workTab: Boolean, onSelect: (Boolean) -> Unit, color: Color) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+    ) {
+        listOf(false to R.string.tab_personal, true to R.string.tab_work).forEach { (work, label) ->
+            val selected = work == workTab
+            Text(
+                text = stringResource(label),
+                color = color.copy(alpha = if (selected) 1f else 0.6f),
+                fontSize = 15.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(if (selected) color.copy(alpha = 0.12f) else Color.Transparent)
+                    .clickable { onSelect(work) }
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
             )
         }
     }
 }
 
 @Composable
-private fun PagedApps(apps: List<AppEntry>, state: LauncherState, actions: AppActions, contentColor: Color, modifier: Modifier) {
-    val pageCount = maxOf(1, (apps.size + PAGE_SIZE - 1) / PAGE_SIZE)
-    val pagerState = rememberPagerState { pageCount }
-    Column(modifier) {
-        HorizontalPager(
-            state = pagerState,
-            beyondViewportPageCount = 1,
-            key = { it },
-            modifier = Modifier.weight(1f),
-        ) { page ->
-            val from = page * PAGE_SIZE
-            val pageApps = if (from < apps.size) apps.subList(from, minOf(from + PAGE_SIZE, apps.size)) else emptyList()
-            AppPage(pageApps, state, actions, contentColor)
-        }
-        PageIndicator(pageCount, pagerState.currentPage, contentColor)
+private fun WorkPaused(onUnpause: () -> Unit, color: Color, modifier: Modifier) {
+    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Text(stringResource(R.string.work_paused), color = color.copy(alpha = 0.7f), fontSize = 15.sp)
+        Spacer(Modifier.height(12.dp))
+        TextButton(onClick = onUnpause) { Text(stringResource(R.string.work_unpause)) }
     }
 }
 
 @Composable
-private fun AppPage(apps: List<AppEntry>, state: LauncherState, actions: AppActions, contentColor: Color) {
+private fun PagedEntries(
+    entries: List<DrawerEntry<AppEntry>>,
+    drawerContent: DrawerContent,
+    content: HomeContent,
+    labels: LabelStyle,
+    modifier: Modifier,
+) {
+    val pageSize = drawerContent.columns * drawerContent.rows
+    val pageCount = maxOf(1, (entries.size + pageSize - 1) / pageSize)
+    val pagerState = rememberPagerState { pageCount }
+    val visible = content.state.drawer.isVisible
+    LaunchedEffect(visible) {
+        if (!visible) pagerState.scrollToPage(0)
+    }
+    SideEffect {
+        content.state.onDrawerEdgeScroll = { direction ->
+            val target = pagerState.currentPage + direction
+            if (target in 0 until pagerState.pageCount) pagerState.animateScrollToPage(target)
+        }
+    }
+    Column(modifier) {
+        HorizontalPager(
+            state = pagerState,
+            beyondViewportPageCount = 1,
+            modifier = Modifier.weight(1f),
+        ) { page ->
+            val from = page * pageSize
+            val pageEntries = if (from < entries.size) entries.subList(from, minOf(from + pageSize, entries.size)) else emptyList()
+            EntryPage(pageEntries, drawerContent.columns, drawerContent.rows, content, labels)
+        }
+        PageDots(pageCount, pagerState.currentPage, labels.color)
+    }
+}
+
+@Composable
+private fun EntryPage(entries: List<DrawerEntry<AppEntry>>, columns: Int, rows: Int, content: HomeContent, labels: LabelStyle) {
     Column(Modifier.fillMaxSize()) {
-        repeat(DRAWER_ROWS) { row ->
+        repeat(rows) { row ->
             Row(Modifier.weight(1f).fillMaxWidth()) {
-                repeat(DRAWER_COLUMNS) { column ->
+                repeat(columns) { column ->
                     Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                        apps.getOrNull(row * DRAWER_COLUMNS + column)?.let { entry ->
-                            AppIcon(entry, actions, LabelStyle(contentColor, shadow = false), Modifier.registerSource(state, Layer.DRAWER, DragSource.DrawerApp(entry)))
-                        }
+                        entries.getOrNull(row * columns + column)?.let { DrawerEntryView(it, content, labels) }
                     }
                 }
             }
@@ -166,26 +250,64 @@ private fun AppPage(apps: List<AppEntry>, state: LauncherState, actions: AppActi
 }
 
 @Composable
-private fun SearchResults(results: List<AppEntry>, state: LauncherState, actions: AppActions, contentColor: Color, modifier: Modifier) {
+private fun DrawerEntryView(entry: DrawerEntry<AppEntry>, content: HomeContent, labels: LabelStyle) {
+    val state = content.state
+    val (source, hovered) = when (entry) {
+        is DrawerEntry.App -> DragSource.DrawerApp(entry.app) to ((state.hover as? DropTarget.DrawerOnApp)?.entry?.ref == entry.app.ref)
+        is DrawerEntry.Folder -> DragSource.DrawerFolderEntry(entry.folder) to ((state.hover as? DropTarget.DrawerOnFolder)?.folderId == entry.folder.id)
+    }
+    val modifier = Modifier
+        .registerSource(state, Layer.DRAWER, source)
+        .alpha(if (state.isDragged(source)) 0f else 1f)
+        .then(if (hovered) Modifier.clip(RoundedCornerShape(18.dp)).background(labels.color.copy(alpha = 0.14f)) else Modifier)
+    when (entry) {
+        is DrawerEntry.App -> AppIcon(entry.app, content.actions, labels, modifier)
+        is DrawerEntry.Folder -> LauncherIcon(entry.folder.title, labels, onClick = { state.openDrawerFolderId = entry.folder.id }, modifier = modifier) {
+            FolderIcon(entry.apps.map { app -> app.icon }, it, drawerFolderBackground(content.darkTheme))
+        }
+    }
+}
+
+@Composable
+private fun SearchResults(results: List<AppEntry>, content: HomeContent, labels: LabelStyle, modifier: Modifier) {
     Box(modifier.fillMaxWidth()) {
         if (results.isEmpty()) {
             Text(
                 text = stringResource(R.string.search_nothing_found),
-                color = contentColor.copy(alpha = 0.6f),
+                color = labels.color.copy(alpha = 0.6f),
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 32.dp),
             )
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(DRAWER_COLUMNS),
+                columns = GridCells.Fixed(5),
                 contentPadding = PaddingValues(vertical = 8.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
                 items(results, key = { it.key.id }) { entry ->
                     Box(Modifier.height(104.dp), contentAlignment = Alignment.Center) {
-                        AppIcon(entry, actions, LabelStyle(contentColor, shadow = false), Modifier.registerSource(state, Layer.DRAWER, DragSource.DrawerApp(entry)))
+                        AppIcon(entry, content.actions, labels, Modifier.registerSource(content.state, Layer.DRAWER, DragSource.DrawerApp(entry)))
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ToHomeZone(state: LauncherState, modifier: Modifier) {
+    DisposableEffect(Unit) { onDispose { state.setToHomeZone(null) } }
+    Box(
+        modifier
+            .height(48.dp)
+            .onGloballyPositioned { state.setToHomeZone(it.boundsInRoot()) }
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color(0xCC1565C0)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(painterResource(R.drawable.ic_home), contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(R.string.drop_to_home), color = Color.White, fontSize = 15.sp)
         }
     }
 }
@@ -247,7 +369,7 @@ private fun SearchField(
 }
 
 @Composable
-private fun PageIndicator(pageCount: Int, currentPage: Int, color: Color) {
+private fun PageDots(pageCount: Int, currentPage: Int, color: Color) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
@@ -264,4 +386,10 @@ private fun PageIndicator(pageCount: Int, currentPage: Int, color: Color) {
             }
         }
     }
+}
+
+/** Measured (so it stays ready) but neither drawn nor hit-tested. */
+private fun Modifier.notPlaced(): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    layout(placeable.width, placeable.height) {}
 }

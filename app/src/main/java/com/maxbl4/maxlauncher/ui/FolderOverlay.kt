@@ -33,7 +33,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -62,33 +61,31 @@ import com.maxbl4.maxlauncher.R
 import com.maxbl4.maxlauncher.apps.AppEntry
 import com.maxbl4.maxlauncher.apps.AppSorting
 import com.maxbl4.maxlauncher.home.AppRef
-import com.maxbl4.maxlauncher.home.FolderItem
-import com.maxbl4.maxlauncher.home.HomeRepository
-import com.maxbl4.maxlauncher.home.renameFolder
-import com.maxbl4.maxlauncher.home.setFolderApps
 
 /**
- * An open home screen folder: editable name, its apps in alphabetical order and an "Add" tile
- * that opens the app picker. Tapping outside closes it; long press and drag of the apps are
- * handled at the root, like everywhere else.
+ * An open folder (on the home screen or in the drawer): editable name, its apps in alphabetical
+ * order and an "Add" tile that opens the app picker. Tapping outside closes it; long press and
+ * drag of the apps are handled at the root, like everywhere else.
+ *
+ * [apps] are the folder's apps with the drag source each one registers as.
  */
 @Composable
-fun FolderOverlay(
-    folder: FolderItem,
-    allApps: List<AppEntry>,
+fun FolderPanel(
+    folderId: Long,
+    title: String,
+    apps: List<Pair<DragSource, AppEntry>>,
+    pickerApps: List<AppEntry>,
     content: HomeContent,
-    home: HomeRepository,
+    onRename: (String) -> Unit,
+    onPicked: (List<AppRef>) -> Unit,
+    onDismiss: () -> Unit,
 ) {
     val state = content.state
     val dark = content.darkTheme
-    val cardColor = if (dark) Color(0xF2262626) else Color(0xF2F7F7F7)
+    val cardColor = if (dark) Color(0xFF262626) else Color(0xFFF7F7F7)
     val textColor = if (dark) Color(0xFFF2F2F2) else Color(0xFF1A1A1A)
     val labels = LabelStyle(textColor, shadow = false)
-    val entries = remember(folder, content.appsByRef) {
-        folder.apps
-            .mapNotNull { item -> content.appsByRef[item.app]?.let { item to it } }
-            .sortedWith(AppSorting.comparator { it.second.label })
-    }
+    val sorted = remember(apps) { apps.sortedWith(AppSorting.comparator { it.second.label }) }
     var pickerOpen by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
 
@@ -96,7 +93,7 @@ fun FolderOverlay(
         Modifier
             .fillMaxSize()
             .background(Color(0x66000000))
-            .pointerInputTap { state.openFolderId = null }
+            .tapToDismiss(onDismiss)
             .windowInsetsPadding(WindowInsets.systemBars)
             .imePadding(),
         contentAlignment = Alignment.Center,
@@ -107,15 +104,15 @@ fun FolderOverlay(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(28.dp))
                 .background(cardColor)
-                .pointerInputTap { focusManager.clearFocus() }
+                .tapToDismiss { focusManager.clearFocus() }
                 .padding(horizontal = 12.dp, vertical = 16.dp),
         ) {
-            var title by remember(folder.id) { mutableStateOf(folder.title) }
+            var name by remember(folderId) { mutableStateOf(title) }
             BasicTextField(
-                value = title,
+                value = name,
                 onValueChange = {
-                    title = it
-                    home.update { layout -> layout.renameFolder(folder.id, it) }
+                    name = it
+                    onRename(it)
                 },
                 singleLine = true,
                 textStyle = TextStyle(color = textColor, fontSize = 20.sp, textAlign = TextAlign.Center),
@@ -125,7 +122,7 @@ fun FolderOverlay(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                 decorationBox = { inner ->
                     Box(contentAlignment = Alignment.Center) {
-                        if (title.isEmpty()) {
+                        if (name.isEmpty()) {
                             Text(stringResource(R.string.folder_name_hint), color = textColor.copy(alpha = 0.45f), fontSize = 20.sp)
                         }
                         inner()
@@ -133,8 +130,7 @@ fun FolderOverlay(
                 },
             )
             LazyVerticalGrid(columns = GridCells.Fixed(4), modifier = Modifier.heightIn(max = 440.dp)) {
-                items(entries, key = { it.first.id }) { (item, entry) ->
-                    val source = DragSource.FolderEntry(folder.id, item)
+                items(sorted, key = { it.first.key }) { (source, entry) ->
                     Box(Modifier.height(100.dp), contentAlignment = Alignment.Center) {
                         AppIcon(entry, content.actions, labels, Modifier.registerSource(state, Layer.FOLDER, source))
                     }
@@ -158,24 +154,26 @@ fun FolderOverlay(
     }
 
     if (pickerOpen) {
-        AppPicker(
-            apps = allApps,
-            selected = folder.apps.map { it.app },
+        AppChecklist(
+            title = stringResource(R.string.picker_title),
+            apps = pickerApps,
+            selected = apps.map { it.second.ref },
             dark = dark,
             onDone = { refs ->
                 pickerOpen = false
-                home.update { it.setFolderApps(folder.id, refs) }
+                onPicked(refs)
             },
             onCancel = { pickerOpen = false },
         )
     }
 }
 
-/** Full-screen list of apps with checkboxes, used to choose the content of a folder. */
+/** Full-screen list of apps with checkboxes (folder content, hidden apps). */
 @Composable
-private fun AppPicker(
+fun AppChecklist(
+    title: String,
     apps: List<AppEntry>,
-    selected: List<AppRef>,
+    selected: Collection<AppRef>,
     dark: Boolean,
     onDone: (List<AppRef>) -> Unit,
     onCancel: () -> Unit,
@@ -188,15 +186,10 @@ private fun AppPicker(
         Modifier
             .fillMaxSize()
             .background(background)
-            .pointerInputTap {}
+            .tapToDismiss {}
             .windowInsetsPadding(WindowInsets.systemBars),
     ) {
-        Text(
-            stringResource(R.string.picker_title),
-            color = textColor,
-            fontSize = 20.sp,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
-        )
+        Text(title, color = textColor, fontSize = 20.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp))
         LazyColumn(Modifier.weight(1f)) {
             items(apps, key = { it.key.id }) { entry ->
                 val checked = entry.ref in chosen
@@ -225,7 +218,7 @@ private fun AppPicker(
             horizontalArrangement = Arrangement.End,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            TextButton(onClick = onCancel) { Text(stringResource(R.string.picker_cancel), color = MaterialTheme.colorScheme.primary) }
+            TextButton(onClick = onCancel) { Text(stringResource(R.string.picker_cancel)) }
             Spacer(Modifier.width(8.dp))
             TextButton(onClick = { onDone(chosen.toList()) }) { Text(stringResource(R.string.picker_done)) }
         }
@@ -234,7 +227,7 @@ private fun AppPicker(
 
 /** Handles taps on this element itself, so they do not reach what is underneath. */
 @Composable
-private fun Modifier.pointerInputTap(onTap: () -> Unit): Modifier {
+fun Modifier.tapToDismiss(onTap: () -> Unit): Modifier {
     val currentOnTap by rememberUpdatedState(onTap)
     return pointerInput(Unit) { detectTapGestures { currentOnTap() } }
 }

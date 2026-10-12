@@ -51,6 +51,26 @@
         </activity>
 
         <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings_title"
+            android:taskAffinity="com.maxbl4.maxlauncher.settings"
+            android:theme="@style/Theme.MaxLauncher.Settings" />
+
+        <service
+            android:name=".LockScreenService"
+            android:exported="false"
+            android:label="@string/lock_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/lock_screen_service" />
+        </service>
+
+        <activity
             android:name=".PinShortcutActivity"
             android:excludeFromRecents="true"
             android:exported="true"

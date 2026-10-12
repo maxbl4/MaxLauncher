@@ -94,13 +94,13 @@ fun AppIcon(entry: AppEntry, actions: AppActions, labelStyle: LabelStyle, modifi
 
 /** Folder icon: a translucent rounded square with previews of the first apps (2×2, or 3×3 for more than four). */
 @Composable
-fun FolderIcon(apps: List<ImageBitmap>, modifier: Modifier = Modifier, dark: Boolean = false) {
+fun FolderIcon(apps: List<ImageBitmap>, modifier: Modifier = Modifier, background: Color = HOME_FOLDER_LIGHT) {
     val grid = if (apps.size <= 4) 2 else 3
     val shown = apps.take(grid * grid)
     Box(
         modifier
             .clip(RoundedCornerShape(30))
-            .background(if (dark) Color(0x66303030) else Color(0x99F2F2F2))
+            .background(background)
             .padding(if (grid == 2) 9.dp else 7.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -127,3 +127,12 @@ fun Modifier.registerSource(state: LauncherState, layer: Layer, source: DragSour
 }
 
 private val LABEL_SHADOW = Shadow(color = Color(0x99000000), offset = Offset(0f, 1.5f), blurRadius = 4f)
+
+/** Folder backgrounds: translucent over the wallpaper, tinted over the plain drawer. */
+val HOME_FOLDER_LIGHT = Color(0x99F2F2F2)
+val HOME_FOLDER_DARK = Color(0x66303030)
+val DRAWER_FOLDER_LIGHT = Color(0x1F000000)
+val DRAWER_FOLDER_DARK = Color(0x29FFFFFF)
+
+fun homeFolderBackground(dark: Boolean) = if (dark) HOME_FOLDER_DARK else HOME_FOLDER_LIGHT
+fun drawerFolderBackground(dark: Boolean) = if (dark) DRAWER_FOLDER_DARK else DRAWER_FOLDER_LIGHT

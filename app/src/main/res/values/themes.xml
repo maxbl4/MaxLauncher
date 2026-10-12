@@ -11,4 +11,10 @@
         <item name="android:enforceStatusBarContrast">false</item>
         <item name="android:windowLayoutInDisplayCutoutMode">always</item>
     </style>
+
+    <!-- Plain opaque screens (settings). -->
+    <style name="Theme.MaxLauncher.Settings" parent="android:Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>
