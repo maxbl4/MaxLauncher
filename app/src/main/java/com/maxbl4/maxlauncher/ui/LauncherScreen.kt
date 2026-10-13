@@ -452,6 +452,6 @@ private fun rememberWallpaperSupportsDarkText(): Boolean {
 private const val HOME_SHRINK = 0.06f
 /** After unlocking, home zooms in from this much larger (as One UI does coming back from an app). */
 private const val UNLOCK_ZOOM = 0.2f
-private const val UNLOCK_REVEAL_MS = 400
+private const val UNLOCK_REVEAL_MS = 340
 private const val DRAG_SCALE = 1.1f
 private const val WALLPAPER_DIM = 0.35f
