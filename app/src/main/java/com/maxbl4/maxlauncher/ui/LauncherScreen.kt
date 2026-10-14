@@ -77,7 +77,7 @@ import kotlin.math.roundToInt
 @Composable
 fun LauncherScreen(
     app: LauncherApplication,
-    homePresses: Flow<Unit>,
+    homePresses: Flow<Boolean>,
     onAddWidget: (WidgetOption, pageId: Long, cell: Pair<Int, Int>?) -> Unit,
     onLockScreen: () -> Unit,
 ) {
@@ -150,7 +150,12 @@ fun LauncherScreen(
     LaunchedEffect(currentLayout, idle) {
         if (idle) homeRepository.update { it.removeEmptyPages() }
     }
-    LaunchedEffect(homePresses) { homePresses.collect { state.closeTopmost() } }
+    // Home closes what is open; with nothing open on the home screen it goes to the home page.
+    LaunchedEffect(homePresses) {
+        homePresses.collect { alreadyOnHome ->
+            if (!state.closeTopmost() && alreadyOnHome) state.onShowHomePage()
+        }
+    }
     // Coming back to the launcher from an app always lands on the plain home screen.
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { state.reset() }
     val unlockReveal = rememberUnlockReveal()

@@ -142,6 +142,9 @@ class LauncherState(private val scope: CoroutineScope) {
     /** Set by the screen: applies a finished drag. */
     var onDrop: (DragSource, DropTarget, preview: DropTarget?) -> Unit = { _, _, _ -> }
 
+    /** Set by the home screen: scrolls to the home page. */
+    var onShowHomePage: suspend () -> Unit = {}
+
     /** Set by the home screen: scrolls pages by +1/-1 while something is held at an edge. */
     var onEdgeScroll: suspend (direction: Int, mayAddPage: Boolean) -> Unit = { _, _ -> }
 

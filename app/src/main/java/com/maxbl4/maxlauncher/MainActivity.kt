@@ -21,7 +21,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 
 class MainActivity : ComponentActivity() {
 
-    private val homePresses = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** Home presses; true when the home screen was already in front (not coming back from an app). */
+    private val homePresses = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
     private val app get() = application as LauncherApplication
 
     /** A widget being added: waiting for the bind permission and/or its configuration screen. */
@@ -76,7 +77,9 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_HOME)) {
-            homePresses.tryEmit(Unit)
+            // As Launcher3: in front and focused, and not brought back from another app.
+            val alreadyOnHome = hasWindowFocus() && (intent.flags and Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT) == 0
+            homePresses.tryEmit(alreadyOnHome)
         }
     }
 

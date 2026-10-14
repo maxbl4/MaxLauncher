@@ -132,6 +132,7 @@ fun HomeScreen(
             }
             pagerState.animateScrollToPage(target)
         }
+        state.onShowHomePage = { pagerState.animateScrollToPage(currentLayout.homePageIndex) }
         state.onPageDrop = { pageId ->
             home.update { l -> l.movePage(l.pages.indexOfFirst { it.id == pageId }, pagerState.currentPage) }
             focusPageId = pageId
