@@ -6,7 +6,9 @@
     Runs `gradlew :app:assembleRelease`, then uploads the APK and an info.json (version,
     date, commit, size, SHA-256) to /var/www/apps.braaap.ru/<app>/ on the server; the page
     there shows them. The files are replaced atomically, so a download never gets half a
-    file. The site itself is set up by braaap-migration\apps.braaap.ru\setup.ps1.
+    file. Only committed code is published: with uncommitted changes the last commit is
+    built in a temporary git worktree. The site itself is set up by
+    braaap-migration\apps.braaap.ru\setup.ps1.
 
 .PARAMETER SkipBuild
     Publish the APK that is already built (marked -dirty if the working tree has changes).
