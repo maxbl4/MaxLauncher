@@ -61,6 +61,7 @@ if (-not $SkipBuild) {
 }
 $apk = Join-Path $buildDir 'app\build\outputs\apk\release\app-release.apk'
 if (-not (Test-Path $apk)) { throw "APK not found at '$apk'." }
+& "$projectDir\sign-release.ps1" -Apk $apk
 
 # --- Version from the APK itself ---
 $sdk = if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { "$env:LOCALAPPDATA\Android\Sdk" }

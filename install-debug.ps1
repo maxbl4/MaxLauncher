@@ -73,6 +73,7 @@ if ($LASTEXITCODE -ne 0) { throw "Gradle build failed (exit $LASTEXITCODE)." }
 
 $apk = Join-Path $projectDir "app\build\outputs\apk\$variant\app-$variant.apk"
 if (-not (Test-Path $apk)) { throw "APK not found at '$apk'." }
+if ($Release) { & "$projectDir\sign-release.ps1" -Apk $apk }
 
 # --- Install ---
 Write-Host "Installing to $Serial ..." -ForegroundColor Cyan
