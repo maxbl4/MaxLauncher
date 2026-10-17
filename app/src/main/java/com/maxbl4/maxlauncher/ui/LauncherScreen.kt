@@ -88,6 +88,7 @@ fun LauncherScreen(
     val layout by homeRepository.layout.collectAsStateWithLifecycle()
     val settings by app.settings.value.collectAsStateWithLifecycle()
     val drawerLayout by app.drawer.value.collectAsStateWithLifecycle()
+    val searchHistory by app.searchHistory.value.collectAsStateWithLifecycle()
 
     val appsByRef = remember(apps) { apps.associateBy { it.ref } }
     val shortcutItems = remember(layout) { layout?.shortcutItems().orEmpty() }
@@ -117,10 +118,11 @@ fun LauncherScreen(
         HomeContent(state, actions, appsByRef, shortcuts, homeLabels, darkTheme, app.widgets, previewHiddenId)
     }
 
-    val drawerContent = remember(apps, drawerLayout, settings, workPaused) {
+    val drawerContent = remember(apps, drawerLayout, settings, workPaused, searchHistory) {
         val hidden = settings.hiddenApps
         val personal = apps.filter { !it.isWork }
         val work = apps.filter { it.isWork && it.ref !in hidden }
+        val visibleByRef = apps.filter { it.ref !in hidden }.associateBy { it.ref }
         DrawerContent(
             entries = buildDrawerEntries(personal, drawerLayout, hidden, { it.ref }, { it.label }, { it.title }),
             searchable = personal.filter { it.ref !in hidden },
@@ -130,6 +132,8 @@ fun LauncherScreen(
             onUnpauseWork = appRepository::unpauseWork,
             columns = settings.drawerColumns,
             rows = settings.drawerRows,
+            searchHistory = searchHistory.ranked().mapNotNull { visibleByRef[it] }.take(SEARCH_HISTORY_SIZE),
+            onSearchLaunch = { entry -> app.searchHistory.update { it.record(entry.ref, System.currentTimeMillis()) } },
         )
     }
 
@@ -455,6 +459,8 @@ private fun rememberWallpaperSupportsDarkText(): Boolean {
 }
 
 private const val HOME_SHRINK = 0.06f
+/** Apps shown when the empty drawer search field is focused. */
+private const val SEARCH_HISTORY_SIZE = 8
 /** After unlocking, home zooms in from this much larger (as One UI does coming back from an app). */
 private const val UNLOCK_ZOOM = 0.2f
 private const val UNLOCK_REVEAL_MS = 300

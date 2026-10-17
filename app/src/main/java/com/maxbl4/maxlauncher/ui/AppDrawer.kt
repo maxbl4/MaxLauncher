@@ -5,6 +5,7 @@ import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -54,6 +55,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -92,6 +94,10 @@ class DrawerContent(
     val onUnpauseWork: () -> Unit,
     val columns: Int,
     val rows: Int,
+    /** Apps opened from search, most opened first; shown when the empty search field is focused. */
+    val searchHistory: List<AppEntry>,
+    /** An app was opened from the search. */
+    val onSearchLaunch: (AppEntry) -> Unit,
 )
 
 /**
@@ -117,6 +123,7 @@ fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modi
 
     var workTab by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    var searchFocused by remember { mutableStateOf(false) }
     // As One UI: search covers personal and work apps from either tab, personal ones first
     // (the search keeps the order of equally good matches).
     val searchable = remember(drawerContent) { drawerContent.searchable + drawerContent.workApps }
@@ -134,6 +141,12 @@ fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modi
     }
     // Search results scroll vertically, so swipes must not close the drawer meanwhile.
     val searching = query.isNotBlank()
+    // Tapping the empty search field shows the apps most often opened from search.
+    val showHistory = !searching && searchFocused && drawerContent.searchHistory.isNotEmpty()
+    val launchFromSearch: (AppEntry, Rect?) -> Unit = { entry, bounds ->
+        drawerContent.onSearchLaunch(entry)
+        content.actions.launch(entry, bounds)
+    }
     DisposableEffect(searching) {
         drawer.swipesEnabled = !searching
         onDispose { drawer.swipesEnabled = true }
@@ -163,12 +176,13 @@ fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modi
             Column(
                 Modifier
                     .fillMaxSize()
-                    .then(if (searching) Modifier.imePadding() else Modifier)
+                    .then(if (searching || showHistory) Modifier.imePadding() else Modifier)
                     .padding(bottom = SEARCH_AREA_HEIGHT),
             ) {
                 TopBar(drawerContent.hasWorkProfile, workTab, onSelect = { workTab = it; query = "" }, contentColor)
                 when {
-                    searching -> SearchResults(results, content, labels, Modifier.weight(1f))
+                    searching -> SearchResults(results, drawerContent.columns, content, labels, launchFromSearch, Modifier.weight(1f))
+                    showHistory -> SearchResults(drawerContent.searchHistory, drawerContent.columns, content, labels, launchFromSearch, Modifier.weight(1f))
                     workTab && drawerContent.workPaused -> WorkPaused(drawerContent.onUnpauseWork, contentColor, Modifier.weight(1f))
                     workTab -> PagedEntries(drawerContent.workApps.map { DrawerEntry.App(it) }, drawerContent, content, labels, Modifier.weight(1f))
                     else -> PagedEntries(drawerContent.entries, drawerContent, content, labels, Modifier.weight(1f))
@@ -191,7 +205,8 @@ fun AppDrawer(drawerContent: DrawerContent, content: HomeContent, modifier: Modi
                         query = query,
                         onQueryChange = { query = it },
                         dark = dark,
-                        onGo = { results.firstOrNull()?.let { content.actions.launch(it, null) } },
+                        onGo = { results.firstOrNull()?.let { launchFromSearch(it, null) } },
+                        onFocusChange = { searchFocused = it },
                     )
                 }
             }
@@ -255,7 +270,13 @@ private fun TopBar(hasWorkProfile: Boolean, workTab: Boolean, onSelect: (Boolean
 
 /** One UI's search: a short pill with a microphone at the bottom, as wide as the screen while in use. */
 @Composable
-private fun DrawerSearchBar(query: String, onQueryChange: (String) -> Unit, dark: Boolean, onGo: () -> Unit) {
+private fun DrawerSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    dark: Boolean,
+    onGo: () -> Unit,
+    onFocusChange: (Boolean) -> Unit,
+) {
     val context = LocalContext.current
     var focused by remember { mutableStateOf(false) }
     val expanded by animateFloatAsState(if (focused || query.isNotEmpty()) 1f else 0f, label = "search width")
@@ -280,7 +301,10 @@ private fun DrawerSearchBar(query: String, onQueryChange: (String) -> Unit, dark
             keyboardActions = KeyboardActions(onGo = { onGo() }),
             modifier = Modifier
                 .width(lerp(SEARCH_SHORT_WIDTH.coerceAtMost(maxWidth), maxWidth, expanded))
-                .onFocusChanged { focused = it.isFocused },
+                .onFocusChanged {
+                    focused = it.isFocused
+                    onFocusChange(it.isFocused)
+                },
             decorationBox = { innerTextField ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -409,7 +433,14 @@ private fun DrawerEntryView(entry: DrawerEntry<AppEntry>, content: HomeContent, 
 }
 
 @Composable
-private fun SearchResults(results: List<AppEntry>, content: HomeContent, labels: LabelStyle, modifier: Modifier) {
+private fun SearchResults(
+    results: List<AppEntry>,
+    columns: Int,
+    content: HomeContent,
+    labels: LabelStyle,
+    onLaunch: (AppEntry, Rect?) -> Unit,
+    modifier: Modifier,
+) {
     Box(modifier.fillMaxWidth()) {
         if (results.isEmpty()) {
             Text(
@@ -419,13 +450,18 @@ private fun SearchResults(results: List<AppEntry>, content: HomeContent, labels:
             )
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(5),
+                columns = GridCells.Fixed(columns),
                 contentPadding = PaddingValues(vertical = 8.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
                 items(results, key = { it.key.id }) { entry ->
                     Box(Modifier.height(104.dp), contentAlignment = Alignment.Center) {
-                        AppIcon(entry, content.actions, labels, Modifier.registerSource(content.state, Layer.DRAWER, DragSource.DrawerApp(entry)))
+                        LauncherIcon(
+                            entry.label,
+                            labels,
+                            onClick = { bounds -> onLaunch(entry, bounds) },
+                            modifier = Modifier.registerSource(content.state, Layer.DRAWER, DragSource.DrawerApp(entry)),
+                        ) { iconModifier -> Image(entry.icon, contentDescription = null, modifier = iconModifier) }
                     }
                 }
             }
